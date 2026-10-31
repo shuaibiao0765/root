@@ -15,7 +15,10 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # AGP 8.13 不兼容 Gradle 9.6+，必须钉死 8.x
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
 
       - name: Install Android SDK packages
         run: |
@@ -26,9 +29,7 @@ jobs:
           ls "$ANDROID_HOME/platforms"
 
       - name: Build
-        run: |
-          gradle wrapper --gradle-version 8.14.3
-          ./gradlew assembleRelease --no-daemon --stacktrace
+        run: gradle assembleRelease --no-daemon --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
