@@ -1,70 +1,62 @@
-# PD2546 一键 Root（Miuix 版）
+# PD2546 一键 Root（GhostLock 同款 UI）
 
-给未 root 的 vivo 设备用，UI 用 [Miuix](https://github.com/miuix-kotlin/miuix)（HyperOS 风格），
-权限走 Shizuku（uid=2000 的 shell），提权逻辑就是包里的 `reroot-local.sh`。
+给未 root 的 vivo 设备用。**界面直接照搬 [YuKongA/ghostlock-app](https://github.com/YuKongA/ghostlock-app)**（Apache-2.0）：
+同一套 Miuix（HyperOS 风格）组件、同一个状态卡 + 设备信息卡 + 偏好设置 + 日志浮层的结构，
+变的只是把 GhostLock 的 kernel profile 换成本机的 `reroot-local.sh`。
+
+权限仍然走 Shizuku（uid=2000 的 shell）。
 
 ## 它做什么
 
-点一下“一键提权”后：
+点「一键提权」之后：
 
 1. 申请 Shizuku 权限（第一次会让你在 Shizuku 里点允许）
 2. 把 assets 里的 6 个文件推到 `/data/local/tmp`
 3. `chmod 755` 后执行 `sh /data/local/tmp/reroot-local.sh`
-4. 把脚本输出实时刷到界面
+4. 脚本输出实时刷进底部日志浮层（可复制）
 
-真正的提权步骤（清 vr funcs / 清 pre_handler / 截断 notifier / 生成 kallsyms / ksud late-load）
-都在那个 shell 脚本里，App 只负责“一键”和把日志显示出来。
+真正的提权步骤（清 vr funcs / 清 pre_handler / 截断 notifier / 生成 kallsyms / `ksud late-load`）
+都在 shell 脚本里，App 只负责“一键”+ 把日志显示出来。
 
 成功标志：日志最后出现 `KSU_ROOT_OK  root 已就绪（u:r:ksu:s0）`。
 
-## 编译
+## 界面（v2.0）
 
-> ⚠️ 这个工程是在手机上的 Linux 沙箱里写的，那边 JVM 跑不起来（execmem 被内核拦），
-> 所以**没有在这里编译验证过**。下面是标准构建方式，编译报错把日志发我。
+- **状态卡**：Shizuku 未连接 / 需要授权 / 正在读内核 / 内核不匹配 / 已就绪 / 执行中，
+  配色沿用 GhostLock 的绿-琥珀-红三档，右侧超大水印图标 `offset(27dp, 31dp)` 裁切
+- **设备信息卡**：设备 / 芯片 / 系统 / 内核（`uname -r`），可长按选择复制
+- **设置**：执行日志、清理 `/data/local/tmp`、强制在未验证内核上运行、执行时保持唤醒
+- **执行按钮**：不可执行时点按钮会直接弹日志浮层告诉你怎么解卡
+- **日志浮层**：`OverlayBottomSheet`，执行中不可下滑关闭；按行着色（绿=成功 红=失败 黄=警告 蓝=步骤）
 
-### 方式 A：Android Studio（推荐）
+## 工具链（必须对齐）
 
-1. Android Studio 打开本目录
-2. 等 Gradle Sync（会自动下 AGP 8.13.2 / Kotlin 2.3.20 / Miuix 0.8.8）
-3. `Build → Build APK(s)`，产物在 `app/build/outputs/apk/release/`
-
-### 方式 B：命令行
-
-```sh
-gradle wrapper --gradle-version 8.14.3   # 生成 gradlew（首次）
-./gradlew assembleRelease
-```
-
-需要 JDK 17、Android SDK（compileSdk 36、build-tools 36）。
-
-### 方式 C：GitHub Actions（不用装任何东西）
-
-把仓库推到 GitHub，`.github/workflows/build.yml` 会自动构建，
-在 Actions 页面的 Artifacts 里下 `app-release.apk`。
-
-## 版本组合
+Miuix 0.9.4 的 AAR 元数据写着 `minCompileSdk=37` + `minAndroidGradlePluginVersion=9.1.0`，
+所以这套工程锁在：
 
 | 组件 | 版本 |
-|---|---|
-| AGP | 8.13.2 |
-| Kotlin | 2.3.20（含 compose compiler plugin） |
-| Gradle | 8.14.3 |
-| Miuix | 0.8.8 |
-| Shizuku API | 13.1.5 |
-| compileSdk / targetSdk | 36 |
+| --- | --- |
+| AGP | 9.1.0（AGP 9 自带 Kotlin 编译，不再 apply kotlin-android） |
+| Kotlin / Compose 插件 | 2.4.20 |
+| Gradle | 9.7.1 |
+| compileSdk / targetSdk | 37 / 37，minSdk 31 |
+| Miuix | `miuix-ui` + `miuix-preference` 0.9.4 |
+| Shizuku | api + provider 13.1.5 |
 
-## 关键实现点
+## 编译
 
-- **Shizuku 13 把 `newProcess` 改成了 private**，`ShizukuRunner` 用反射调用
-  `newProcess(String[], String[], String)`，返回的 `ShizukuRemoteProcess` 就是个 `Process`。
-- 推文件不走 `/sdcard`，直接把 asset 写进远端进程 stdin（`cat > /data/local/tmp/xxx`），
-  避免 app 私有目录和 shell 用户互不可读。
-- 冷重启后 root 失效、Shizuku 也会掉，重新启动 Shizuku 再点一次即可。
-- 界面常亮（`FLAG_KEEP_SCREEN_ON`），因为流程要跑几分钟。
+沙箱里 JVM 起不来（PRoot 下 execmem 被内核拦），所以用 GitHub Actions：
 
-## 注意
+```sh
+git push          # 触发 .github/workflows/build.yml
+# 产物：Actions → 最新 run → Artifacts → app-release
+```
 
-- 脚本第一步就核对内核 build：不是 `6.12.58-android16-6-gdd6fd5c98918` 会拒绝执行。
-  机型不限，内核串一致就行。
-- 管理器的 uapi 版本要对：`KernelSU_v3.3.1-27-gdb6263d3_32707`（uapi 6）。
-- 这是 per-boot 临时 root，冷重启掉、软重启不掉。
+Android Studio 打开也能直接编译（需要 SDK 37）。
+
+## 与 GhostLock 的差异
+
+- 保留原项目里的 `ShizukuRunner`（Shizuku 13 把 `newProcess` 收回私有，走反射）
+- 新增「内核不匹配」拦截 + 强制开关：内置符号表只对 `6.12.58-android16-6-gdd6fd5c98918` 有效
+- 新增清理功能，避免 `/data/local/tmp` 里留 payload
+- 没搬 GhostLock 的 kernel profile 解析、配置导入、CPU 核心组选择——那些跟它的 exploit 绑定

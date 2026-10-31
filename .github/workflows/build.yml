@@ -13,20 +13,23 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
-      # AGP 8.13 不兼容 Gradle 9.6+，必须钉死 8.x
+      # AGP 9.1 + Miuix 0.9.4 需要 Gradle 9.x
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.14.3'
+          gradle-version: '9.7.1'
 
       - name: Install Android SDK packages
         run: |
           SDKM=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
           echo "sdkmanager = $SDKM"
           yes | "$SDKM" --licenses > /dev/null 2>&1 || true
-          "$SDKM" "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-          ls "$ANDROID_HOME/platforms"
+          "$SDKM" --list 2>/dev/null | grep -E "platforms;android-3[6-9]" | head -20 || true
+          for p in "platform-tools" "platforms;android-37" "platforms;android-37.2" "build-tools;37.0.0" "build-tools;36.0.0"; do
+            "$SDKM" "$p" > /dev/null 2>&1 && echo "installed: $p" || echo "skipped: $p"
+          done
+          ls "$ANDROID_HOME/platforms" || true
 
       - name: Build
         run: gradle assembleRelease --no-daemon --stacktrace

@@ -1,0 +1,570 @@
+package com.minis.pd2546root
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.CheckCircleOutline
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.ErrorOutline
+import androidx.compose.material.icons.rounded.RemoveCircleOutline
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.basic.Card
+import top.yukonga.miuix.kmp.basic.CardDefaults
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
+import top.yukonga.miuix.kmp.basic.Scaffold
+import top.yukonga.miuix.kmp.basic.SmallTitle
+import top.yukonga.miuix.kmp.basic.SmallTopAppBar
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
+import top.yukonga.miuix.kmp.basic.TopAppBar
+import top.yukonga.miuix.kmp.basic.rememberTopAppBarState
+import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
+import top.yukonga.miuix.kmp.preference.ArrowPreference
+import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import top.yukonga.miuix.kmp.theme.darkColorScheme
+import top.yukonga.miuix.kmp.theme.lightColorScheme
+import top.yukonga.miuix.kmp.utils.PressFeedbackType
+import top.yukonga.miuix.kmp.utils.overScrollVertical
+import top.yukonga.miuix.kmp.utils.scrollEndHaptic
+
+private enum class RootScreen { Main, Advanced }
+
+@Composable
+fun RootApp(state: RootState, actions: RootActions) {
+    MiuixTheme(colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
+        var screen by remember { mutableStateOf(RootScreen.Main) }
+        Box(Modifier.fillMaxSize()) {
+            when (screen) {
+                RootScreen.Main -> MainScreen(
+                    state = state,
+                    actions = actions,
+                    onOpenAdvanced = { screen = RootScreen.Advanced },
+                )
+
+                RootScreen.Advanced -> AdvancedScreen(
+                    state = state,
+                    onBack = { screen = RootScreen.Main },
+                )
+            }
+            LogSheet(state = state, actions = actions)
+        }
+    }
+}
+
+// ---------------- 主屏 ----------------
+
+@Composable
+private fun MainScreen(state: RootState, actions: RootActions, onOpenAdvanced: () -> Unit) {
+    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = { TopAppBar(title = "PD2546 Root", scrollBehavior = scrollBehavior) },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .scrollEndHaptic()
+                .overScrollVertical()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            contentPadding = PaddingValues(
+                start = 12.dp,
+                end = 12.dp,
+                top = padding.calculateTopPadding() + 8.dp,
+                bottom = padding.calculateBottomPadding() + 12.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(key = "status") {
+                StatusCard(state = state, actions = actions)
+            }
+            item(key = "device") {
+                DeviceCard(state.device)
+            }
+            item(key = "settings") {
+                Card {
+                    ArrowPreference(
+                        title = "执行日志",
+                        summary = if (state.logs.isEmpty()) "还没有输出" else "最近 ${state.logs.size} 行",
+                        onClick = actions.onOpenSheet,
+                    )
+                    ArrowPreference(
+                        title = "清理设备端文件",
+                        summary = "删除 /data/local/tmp 下的 6 个 payload",
+                        onClick = actions.onCleanup,
+                    )
+                    SwitchPreference(
+                        checked = state.forceUnverified,
+                        onCheckedChange = actions.onForceChanged,
+                        title = "强制在未验证内核上运行",
+                        summary = "内核与内置符号表不匹配时也执行，容易失败或重启",
+                    )
+                    SwitchPreference(
+                        checked = state.keepAwake,
+                        onCheckedChange = actions.onKeepAwakeChanged,
+                        title = "执行时保持唤醒",
+                        summary = "跑脚本期间不锁屏",
+                    )
+                }
+            }
+            item(key = "advanced") {
+                Card {
+                    ArrowPreference(
+                        title = "高级选项",
+                        summary = "执行步骤、payload 清单与目标内核",
+                        onClick = onOpenAdvanced,
+                    )
+                }
+            }
+            item(key = "run") {
+                RunButton(state = state, actions = actions)
+            }
+        }
+    }
+}
+
+// ---------------- 状态卡 ----------------
+
+private data class StatusSpec(
+    val background: Color,
+    val title: String,
+    val summary: String,
+    val icon: ImageVector,
+    val tint: Color,
+)
+
+@Composable
+private fun statusSpec(state: RootState): StatusSpec {
+    val dark = isSystemInDarkTheme()
+    val greenBg = if (dark) Color(0xFF1A3825) else Color(0xFFDFFAE4)
+    val amberBg = if (dark) Color(0xFF3E2F1B) else Color(0xFFFFF0DB)
+    val redBg = if (dark) Color(0xFF3A1B1B) else Color(0xFFFFE3E3)
+    val green = Color(0xFF36D167)
+    val amber = Color(0xFFF5A623)
+    val red = Color(0xFFF72727)
+
+    return when {
+        state.running -> StatusSpec(
+            greenBg, "执行中…",
+            "正在跑 reroot-local.sh，日志会实时刷在下方浮层",
+            Icons.Rounded.CheckCircleOutline, green,
+        )
+
+        state.shizuku == ShizukuState.NOT_RUNNING -> StatusSpec(
+            redBg, "Shizuku 未连接",
+            "先用无线调试启动 Shizuku，再回到这里点我",
+            Icons.Rounded.RemoveCircleOutline, red,
+        )
+
+        state.shizuku == ShizukuState.PERMISSION_REQUIRED -> StatusSpec(
+            amberBg, "需要授权 Shizuku",
+            "点这里请求授权，在 Shizuku 弹窗里点允许",
+            Icons.Rounded.ErrorOutline, amber,
+        )
+
+        !state.kernelKnown -> StatusSpec(
+            amberBg, "正在读取内核",
+            "读取 uname -r 后判断是否在支持列表里",
+            Icons.Rounded.ErrorOutline, amber,
+        )
+
+        !state.kernelOk -> StatusSpec(
+            amberBg, "内核不匹配",
+            "内置脚本针对 $TARGET_KERNEL，可到设置里强制继续",
+            Icons.Rounded.ErrorOutline, amber,
+        )
+
+        state.kernelMatches -> StatusSpec(
+            greenBg, "已就绪",
+            "内核匹配、Shizuku 已授权，点下面的按钮开始",
+            Icons.Rounded.CheckCircleOutline, green,
+        )
+
+        else -> StatusSpec(
+            amberBg, "强制模式",
+            "内核不在支持列表，已按你的设置继续",
+            Icons.Rounded.ErrorOutline, amber,
+        )
+    }
+}
+
+@Composable
+private fun StatusCard(state: RootState, actions: RootActions) {
+    val spec = statusSpec(state)
+    Card(
+        colors = CardDefaults.defaultColors(color = spec.background),
+        onClick = {
+            when {
+                state.shizuku == ShizukuState.NOT_RUNNING || state.shizuku == ShizukuState.PERMISSION_REQUIRED ->
+                    actions.onRequestPermission()
+
+                state.shizuku == ShizukuState.READY && state.device.kernel.isBlank() -> Unit
+                else -> actions.onOpenSheet()
+            }
+        },
+        showIndication = true,
+        pressFeedbackType = PressFeedbackType.Tilt,
+    ) {
+        Box(Modifier.fillMaxWidth().heightIn(min = 110.dp)) {
+            Icon(
+                imageVector = spec.icon,
+                contentDescription = null,
+                tint = spec.tint.copy(alpha = 0.85f),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .offset(x = 27.dp, y = 31.dp)
+                    .size(110.dp),
+            )
+            Column(Modifier.padding(start = 16.dp, top = 14.dp, end = 120.dp, bottom = 14.dp)) {
+                Text(text = spec.title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(1.dp))
+                Text(text = spec.summary, fontSize = 15.sp)
+            }
+        }
+    }
+}
+
+// ---------------- 设备信息 ----------------
+
+@Composable
+private fun DeviceCard(device: DeviceInfo) {
+    Card(insideMargin = PaddingValues(16.dp)) {
+        SelectionContainer {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+            ) {
+                InfoItem("设备", device.model)
+                InfoItem("芯片", device.soc)
+                InfoItem("系统", device.android)
+                InfoItem("内核", device.kernel.ifBlank { "—" })
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoItem(title: String, value: String) {
+    Column {
+        Text(
+            text = title,
+            fontSize = 18.sp,
+            fontWeight = FontWeight.Medium,
+            color = MiuixTheme.colorScheme.onSurface,
+        )
+        Text(
+            text = value,
+            modifier = Modifier.padding(top = 2.dp),
+            fontSize = 14.sp,
+            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+        )
+    }
+}
+
+// ---------------- 执行按钮 ----------------
+
+@Composable
+private fun RunButton(state: RootState, actions: RootActions) {
+    val label = when {
+        state.running -> "执行中…"
+        state.shizuku == ShizukuState.NOT_RUNNING -> "启动 Shizuku 后可执行"
+        state.shizuku == ShizukuState.PERMISSION_REQUIRED -> "授权 Shizuku"
+        else -> "一键提权"
+    }
+    val blocked = !state.running &&
+        (state.shizuku != ShizukuState.READY || !state.kernelOk)
+
+    Box {
+        TextButton(
+            text = label,
+            enabled = !blocked && !state.running,
+            colors = ButtonDefaults.textButtonColorsPrimary(),
+            onClick = {
+                if (state.shizuku == ShizukuState.PERMISSION_REQUIRED) {
+                    actions.onRequestPermission()
+                } else {
+                    actions.onRun()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        )
+        /* 禁用的 TextButton 不吃点击，盖一层给出可执行的下一步 */
+        if (blocked) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .clickable {
+                        if (state.shizuku == ShizukuState.PERMISSION_REQUIRED) {
+                            actions.onRequestPermission()
+                        } else {
+                            actions.onOpenSheet()
+                        }
+                    },
+            )
+        }
+    }
+}
+
+// ---------------- 日志浮层 ----------------
+
+@Composable
+private fun LogSheet(state: RootState, actions: RootActions) {
+    OverlayBottomSheet(
+        show = state.sheetVisible,
+        title = "执行日志",
+        allowDismiss = !state.running,
+        onDismissRequest = actions.onDismissSheet,
+        startAction = {
+            IconButton(onClick = actions.onCopyLogs) {
+                Icon(
+                    imageVector = Icons.Rounded.ContentCopy,
+                    contentDescription = "复制日志",
+                    tint = MiuixTheme.colorScheme.onBackground,
+                )
+            }
+        },
+        endAction = {
+            IconButton(enabled = !state.running, onClick = actions.onDismissSheet) {
+                Icon(imageVector = Icons.Rounded.Close, contentDescription = "关闭")
+            }
+        },
+        content = {
+            LogPanel(
+                lines = state.logs,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 240.dp, max = 520.dp)
+                    .navigationBarsPadding(),
+            )
+        },
+    )
+}
+
+@Composable
+private fun LogPanel(lines: List<LogLine>, modifier: Modifier = Modifier) {
+    val listState = rememberLazyListState()
+    LaunchedEffect(lines.size) {
+        if (lines.isNotEmpty()) listState.scrollToItem(lines.lastIndex)
+    }
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF0B1220))
+            .padding(12.dp),
+    ) {
+        if (lines.isEmpty()) {
+            Text(
+                text = "日志会显示在这里。\n冷重启后 root 失效，再点一次即可。",
+                color = Color(0xFF9CA3AF),
+                fontSize = 12.sp,
+                fontFamily = FontFamily.Monospace,
+            )
+        } else {
+            SelectionContainer {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                ) {
+                    items(lines) { line ->
+                        Text(
+                            text = line.text,
+                            color = toneColor(line.tone),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun toneColor(tone: LogTone): Color = when (tone) {
+    LogTone.OK -> Color(0xFF5FD68A)
+    LogTone.ERROR -> Color(0xFFFF6B6B)
+    LogTone.WARN -> Color(0xFFFFC94D)
+    LogTone.INFO -> Color(0xFF60A5FA)
+    LogTone.NORMAL -> Color(0xFFD1D5DB)
+}
+
+// ---------------- 高级选项 ----------------
+
+@Composable
+private fun AdvancedScreen(state: RootState, onBack: () -> Unit) {
+    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            SmallTopAppBar(
+                title = "高级选项",
+                titleColor = MiuixTheme.colorScheme.onSurface,
+                scrollBehavior = scrollBehavior,
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(imageVector = Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .scrollEndHaptic()
+                .overScrollVertical()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            contentPadding = PaddingValues(
+                start = 12.dp,
+                end = 12.dp,
+                top = padding.calculateTopPadding(),
+                bottom = padding.calculateBottomPadding() + 24.dp,
+            ),
+        ) {
+            item {
+                Box(Modifier.padding(top = 8.dp)) {
+                    SmallTitle(text = "运行状态")
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                    CardBody(
+                        listOf(
+                            "Shizuku" to when (state.shizuku) {
+                                ShizukuState.READY -> "已授权"
+                                ShizukuState.PERMISSION_REQUIRED -> "已连接，未授权"
+                                ShizukuState.NOT_RUNNING -> "未连接"
+                            },
+                            "内核" to state.device.kernel.ifBlank { "—" },
+                            "上次执行" to state.lastRunAt,
+                            "退出码" to (state.exitCode?.toString() ?: "—"),
+                        ),
+                    )
+                }
+            }
+            item {
+                Box(Modifier.padding(bottom = 4.dp)) {
+                    SmallTitle(text = "执行步骤")
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                    CardBody(
+                        listOf(
+                            "1 推送" to "把 assets 里 6 个文件灌进 /data/local/tmp",
+                            "2 授权" to "chmod 755，用 sh 执行 reroot-local.sh",
+                            "3 提权" to "清 vr funcs / pre_handler、截断 notifier、生成 kallsyms",
+                            "4 加载" to "ksud late-load 挂上 KernelSU",
+                        ),
+                    )
+                }
+            }
+            item {
+                Box(Modifier.padding(bottom = 4.dp)) {
+                    SmallTitle(text = "Payload")
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                    CardBody(
+                        listOf(
+                            "reroot-local.sh" to "主流程脚本",
+                            "timer98260" to "触发 fake 凭据页",
+                            "ksud" to "KernelSU 用户态加载器",
+                            "probe" to "内核地址探测",
+                            "fake_shell.sh" to "伪造 shell 上下文",
+                            "symbols.txt" to "符号表",
+                        ),
+                    )
+                }
+            }
+            item {
+                Box(Modifier.padding(bottom = 4.dp)) {
+                    SmallTitle(text = "说明")
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "目标内核：$TARGET_KERNEL",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            text = "仅在目标 build 上验证过。其他内核需要自己重算符号表，" +
+                                "强行执行大概率失败，个别情况会直接重启——这不是 App 崩溃。",
+                            fontSize = 13.sp,
+                            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                        )
+                        Text(
+                            text = "根权限是 per-boot 的：冷重启失效，软重启不掉。",
+                            fontSize = 13.sp,
+                            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CardBody(rows: List<Pair<String, String>>) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        rows.forEach { (key, value) ->
+            Row(Modifier.fillMaxWidth()) {
+                Text(text = key, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = value,
+                    fontSize = 13.sp,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.68f),
+                )
+            }
+        }
+    }
+}
