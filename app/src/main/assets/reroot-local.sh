@@ -387,8 +387,12 @@ say "[7/7] ksud late-load（install → late-load → 取证）"
 # （上一版设备上跑的仍是旧脚本，白丢一轮）。
 write_run <<LOADEOF
 echo ===LOAD===
-echo "[ksu] stage v3.3 inline"
+echo "[ksu] stage v3.4 inline"
 id
+echo "[ksu] ---- 管理器 ----"
+echo "[ksu] pkg=$PKG"
+pm path $PKG 2>&1 | head -2
+dumpsys package $PKG 2>/dev/null | grep -m3 -E 'versionName|versionCode|lastUpdateTime' 
 cat /sys/module/module/parameters/sig_enforce
 mkdir -p /data/adb
 cp $D/kall /data/adb/kall 2>/dev/null
