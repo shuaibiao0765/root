@@ -28,6 +28,10 @@ TRACE_SYS_EXIT=ffffffc0826d93e0
 
 # 所有 say 的东西同时攒一份到 $RUNLOG：App 端日志浮层要是没弹出来，
 # 事后用「拉取设备端状态」或 adb 直接 cat 这个文件就能看到跑到了哪一步。
+SU_BIN=""
+for _p in /data/adb/ksu/bin/su /debug_ramdisk/su su; do
+  command -v "$_p" >/dev/null 2>&1 && { SU_BIN=$_p; break; }
+done
 RUNLOG="$D/run.log"
 # 每行直接追加落盘（不是退出时才写）：plant 阶段真要 panic 重启，
 # 重启后也能看到日志最后停在哪一行。
@@ -479,7 +483,9 @@ say "=== 验证 ==="
 say "$(grep -a 'LATE_RC' "$LOG" | tail -1)"
 say "$(grep -a 'KSU_LOADED\|KSU_MISSING\|\[ksu\] late-load' "$LOG" | tail -3)"
 say "$(grep -a 'kernelsu' "$LOG" | tail -1)"
-OUT=$(grep kernelsu /proc/modules 2>/dev/null; su -c id 2>&1 | head -1; getenforce 2>/dev/null)
+SUID=$("$SU_BIN" -c id 2>/dev/null | head -1)
+[ -n "$SUID" ] || SUID=$(/data/adb/ksu/bin/su -c id 2>&1 | head -1)
+OUT=$(grep kernelsu /proc/modules 2>/dev/null; echo "$SUID"; getenforce 2>/dev/null)
 say "$OUT"
 case "$OUT" in
   *kernelsu*u:r:ksu:s0*)
