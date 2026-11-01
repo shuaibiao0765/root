@@ -137,6 +137,7 @@ private fun MainScreen(state: RootState, actions: RootActions, onOpenAdvanced: (
                         summary = state.managerSummary,
                         onClick = actions.onOpenPicker,
                     )
+                    InstalledManagerLines(state)
                     ArrowPreference(
                         title = "执行日志",
                         summary = if (state.logs.isEmpty()) "还没有输出" else "最近 ${state.logs.size} 行",
@@ -533,6 +534,56 @@ private fun toneColor(tone: LogTone): Color = when (tone) {
     LogTone.NORMAL -> Color(0xFFD1D5DB)
 }
 
+// ---------------- 已装管理器的版本（绿色，挂在“根管理器”下面） ----------------
+
+@Composable
+private fun InstalledManagerLines(state: RootState) {
+    val green = Color(0xFF2FA84F)
+    val muted = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.45f)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        if (state.managers.isEmpty()) {
+            Text(
+                text = "未检测到已安装的 KSU 管理器",
+                fontSize = 12.5.sp,
+                color = muted,
+            )
+            Text(
+                text = "可以点上面这一行手动导入 APK",
+                fontSize = 11.5.sp,
+                color = muted,
+            )
+        } else {
+            state.managers.take(5).forEach { candidate ->
+                val suffix = when {
+                    state.imported?.packageName == candidate.packageName -> " · 已导入"
+                    candidate.packageName == state.selectedPackage -> " · 使用中"
+                    candidate.hasKsud -> ""
+                    else -> " · 无内置 ksud"
+                }
+                Text(
+                    text = "● ${candidate.label} ${candidate.version}$suffix",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = green,
+                )
+            }
+            if (state.managers.size > 5) {
+                Text(
+                    text = "还有 ${state.managers.size - 5} 个，点上面查看全部",
+                    fontSize = 11.5.sp,
+                    color = muted,
+                )
+            }
+        }
+    }
+}
+
 // ---------------- 根管理器选择 ----------------
 
 @Composable
@@ -608,6 +659,16 @@ private fun ManagerSheet(state: RootState, actions: RootActions) {
                             title = "导入管理器 APK…",
                             summary = "任意 KernelSU 版本，含 canary / 测试版；取出其中的 libksud.so",
                             onClick = actions.onImportApk,
+                        )
+                    }
+                }
+
+                item(key = "rescan") {
+                    Card {
+                        ArrowPreference(
+                            title = "重新扫描已安装的管理器",
+                            summary = "装完管理器后点这里刷新版本号",
+                            onClick = actions.onRescan,
                         )
                     }
                 }

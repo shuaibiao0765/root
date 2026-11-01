@@ -109,7 +109,11 @@ class RootState {
                     "${c.packageName} · ${c.version} · 没带 ksud，仍用内置"
                 }
             }
-            return "自动检测；也可以导入任意版本的 KernelSU 管理器 APK"
+            return if (managers.isEmpty()) {
+                "未检测到已安装的管理器，可点这里导入 APK"
+            } else {
+                "检测到 ${managers.size} 个已安装的管理器，默认用内置 ksud"
+            }
         }
 }
 
@@ -126,6 +130,7 @@ class RootActions(
     val onDismissPicker: () -> Unit,
     val onSelectManager: (String?) -> Unit,
     val onImportApk: () -> Unit,
+    val onRescan: () -> Unit,
 )
 
 class MainActivity : ComponentActivity() {
@@ -176,6 +181,7 @@ class MainActivity : ComponentActivity() {
                         state.imported = null
                         state.pickerVisible = false
                     },
+                    onRescan = { refreshManagers() },
                     onImportApk = {
                         runCatching { pickApk.launch(arrayOf("application/vnd.android.package-archive", "*/*")) }
                             .onFailure { log("[!] 打开文件选择器失败：${it.message}", LogTone.ERROR) }

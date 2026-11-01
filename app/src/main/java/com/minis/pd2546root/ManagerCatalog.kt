@@ -20,16 +20,27 @@ object ManagerCatalog {
         "com.kowx712.supermanager",
     )
 
+    /** 包名里带这些词的也当管理器，防止 fork 用了自定义包名 */
+    private val NAME_HINTS = listOf("kernelsu", "sukisu", "bakasu", "kowsu", "supermanager", "ksunext")
+
     data class Candidate(
         val packageName: String,
         val label: String,
         val versionName: String,
+        val versionCode: Long,
         val libPath: String?,
         val builtin: Boolean,
     ) {
         val hasKsud: Boolean get() = libPath != null
-        val version: String get() = versionName.ifBlank { "未知版本" }
+
+        /** 版本号：优先 versionName，没有就用 versionCode，绝不显示“未知”才叫读到了 */
+        val version: String
+            get() = versionName.takeIf { it.isNotBlank() }?.let { "v$it" }
+                ?: ("v" + versionCode)
     }
+
+    fun looksLikeManager(packageName: String): Boolean =
+        packageName in BUILTIN || NAME_HINTS.any { packageName.contains(it, ignoreCase = true) }
 
     /** 扫描非系统应用；带 libksud.so 的排前面，其次内置家族，最后按名字 */
     fun scan(ctx: Context, selfPackage: String): List<Candidate> {
@@ -46,14 +57,15 @@ object ManagerCatalog {
                     label = runCatching { ai.loadLabel(pm).toString() }
                         .getOrDefault(pi.packageName),
                     versionName = pi.versionName.orEmpty(),
+                    versionCode = pi.longVersionCode,
                     libPath = lib?.takeIf { it.isFile }?.absolutePath,
                     builtin = pi.packageName in BUILTIN,
                 )
             }
-            // 只保留“已知 KSU 家族”或“真的带 libksud.so”的，别把 Chrome 也列出来
-            .filter { it.builtin || it.hasKsud }
+            // 已知 KSU 家族 / 包名像管理器 / 真的带 libksud.so —— 三者任一就算
+            .filter { it.builtin || it.hasKsud || it.packageName in BUILTIN || looksLikeManager(it.packageName) }
             .sortedWith(
-                compareByDescending<Candidate> { it.builtin && it.hasKsud }
+                compareByDescending<Candidate> { it.builtin }
                     .thenByDescending { it.hasKsud }
                     .thenBy { it.label.lowercase() },
             )
