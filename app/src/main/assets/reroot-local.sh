@@ -176,7 +176,9 @@ KMI=${PD_KMI:-android16-6.12}
 KEXP='6.12.58-android16-6-gdd6fd5c98918'
 KV=$(uname -r)
 say "  kernel=$KV"
-say "  modules_disabled=$(cat /proc/sys/kernel/modules_disabled 2>/dev/null || echo '?')  lockdown=$(cat /sys/kernel/security/lockdown 2>/dev/null || echo '?')"
+say "  modules_disabled=$(cat /proc/sys/kernel/modules_disabled 2>/dev/null || echo '?')"
+say "  lsm=[$(cat /sys/kernel/security/lsm 2>/dev/null || echo '?')]"
+say "  /sys/kernel/security: $(ls /sys/kernel/security 2>/dev/null | tr '\n' ' ')"
 case "$KV" in
   *"$KEXP"*) ;;
   *)
@@ -453,6 +455,13 @@ if grep -q '^kernelsu ' /proc/modules; then echo KSU_LOADED; else
 fi
 echo "[ksu] ---- logcat(ksu/insmod) ----"
 logcat -d -t 400 2>/dev/null | grep -iE 'kernelsu|ksud|insmod|lkm|module' | tail -30
+echo "[ksu] ---- lsm / securityfs ----"
+cat /sys/kernel/security/lsm 2>&1
+ls -l /sys/kernel/security 2>&1 | head -20
+echo "[ksu] ---- ksud --help ----"
+"\$KSUD" --help 2>&1 | head -40
+echo "[ksu] ---- dmesg: lockdown/lsm/bpf/hks ----"
+dmesg 2>&1 | grep -iE 'lockdown|lsm|bpf|hks-dfd|security' | tail -30
 echo "[ksu] ---- dmesg tail ----"
 dmesg 2>&1 | tail -n 40
 echo "[ksu] enforce=\$(getenforce)"
