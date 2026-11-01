@@ -460,6 +460,13 @@ cat /sys/kernel/security/lsm 2>&1
 ls -l /sys/kernel/security 2>&1 | head -20
 echo "[ksu] ---- ksud --help ----"
 "\$KSUD" --help 2>&1 | head -40
+echo "[ksu] ---- ksud insmod --help ----"
+"\$KSUD" insmod --help 2>&1 | head -30
+echo "[ksu] ---- try ksud insmod $D/ksu.ko ----"
+"\$KSUD" insmod $D/ksu.ko 2>&1
+echo "[ksu] ksud-insmod rc=\$?"
+/system/bin/usleep 1000000
+grep -q '^kernelsu ' /proc/modules && echo KSU_LOADED_VIA_INSMOD || echo KSU_STILL_MISSING
 echo "[ksu] ---- dmesg: lockdown/lsm/bpf/hks ----"
 dmesg 2>&1 | grep -iE 'lockdown|lsm|bpf|hks-dfd|security' | tail -30
 echo "[ksu] ---- dmesg tail ----"
