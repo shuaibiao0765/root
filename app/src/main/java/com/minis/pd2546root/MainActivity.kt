@@ -258,14 +258,15 @@ class MainActivity : ComponentActivity() {
 
     // ---------------- 日志 ----------------
 
-    private val stepRegex = Regex("""\[(\d)\s*/\s*(\d)\]\s*(.+)""")
+    private val stepRegex = Regex("""\[(\d)\s*/\s*\d\]\s*(.+)""")
 
     private fun log(line: String, tone: LogTone? = null) {
         val resolved = tone ?: toneOf(line)
         val step = stepRegex.find(line)
         runOnUiThread {
             if (step != null) {
-                val index = step.groupValues[1].toIntOrNull()
+                // 脚本里是 [1/7]..[7/7]，内部用 0 基下标
+                val index = step.groupValues[1].toIntOrNull()?.minus(1)
                 if (index != null && index in STEP_TITLES.indices) {
                     state.currentStep = index
                     state.stepFailed = false
