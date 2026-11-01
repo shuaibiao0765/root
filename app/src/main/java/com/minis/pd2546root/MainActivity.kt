@@ -586,7 +586,9 @@ class MainActivity : ComponentActivity() {
 
     private fun pushKsud(out: (String) -> Unit) {
         val imported = state.imported
-        val candidate = state.chosenManager
+        // 优先用管理器自带的 libksud.so（带 KernelSU bootstrap，能绕过 init_module 被拦的问题），
+        // 没显式选择时自动挑第一个带 libksud 的管理器（一般是 me.weishu.kernelsu）。
+        val candidate = state.chosenManager ?: state.managers.firstOrNull { it.hasKsud }
         val libPath = candidate?.libPath
 
         when {

@@ -413,27 +413,45 @@ echo "[ksu] ksud=\$KSUD size=\$(wc -c < \$KSUD 2>/dev/null)"
 "\$KSUD" install > $D/install.log 2>&1
 echo "[ksu] install rc=\$?"
 sed -n '1,20p' $D/install.log 2>/dev/null
-"\$KSUD" late-load --kmi $KMI --allow-shell --package-name $PKG > $D/late.log 2>&1
-echo "[ksu] late-load rc=\$?"
-sed -n '1,40p' $D/late.log 2>/dev/null
-if ! grep -q '^kernelsu ' /proc/modules; then
-  "\$KSUD" late-load --allow-shell --package-name $PKG > $D/late2.log 2>&1
-  echo "[ksu] late-load2 rc=\$?"
-  sed -n '1,40p' $D/late2.log 2>/dev/null
+
+# 按参考工具（Root 酱）的顺序打：先 late-load 不带 --package-name，再 ksud insmod / 内核 insmod
+# 带 manager_package= 参数（KernelSU bootstrap 内存装载，绕开被拦的 init_module）。
+KSU_LOADED=0
+"\$KSUD" late-load --allow-shell --kmi $KMI > $D/late.log 2>&1
+echo "[ksu] late-load(无package-name) rc=\$?"
+sed -n '1,30p' $D/late.log 2>/dev/null
+grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
+
+if [ "$KSU_LOADED" != "1" ] && [ -f $D/ksu.ko ]; then
+  cp -f $D/ksu.ko $D/drv.ko 2>/dev/null
+  echo "[ksu] ---- ksud insmod $D/drv.ko manager_package=$PKG ----"
+  "\$KSUD" insmod $D/drv.ko manager_package=$PKG 2>&1
+  echo "[ksu] ksud-insmod rc=\$?"
+  /system/bin/usleep 500000
+  grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
 fi
-/system/bin/usleep 2000000
-if grep -q '^kernelsu ' /proc/modules; then echo KSU_LOADED; else
+
+if [ "$KSU_LOADED" != "1" ] && [ -f $D/drv.ko ]; then
+  echo "[ksu] ---- /system/bin/insmod $D/drv.ko manager_package=$PKG ----"
+  /system/bin/insmod $D/drv.ko manager_package=$PKG 2>&1
+  echo "[ksu] insmod rc=\$?"
+  /system/bin/usleep 500000
+  grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
+fi
+
+if [ "$KSU_LOADED" != "1" ]; then
+  "\$KSUD" late-load --allow-shell --kmi $KMI --package-name $PKG > $D/late2.log 2>&1
+  echo "[ksu] late-load(带package-name) rc=\$?"
+  sed -n '1,30p' $D/late2.log 2>/dev/null
+  grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
+fi
+
+/system/bin/usleep 1000000
+if [ "$KSU_LOADED" = "1" ]; then echo KSU_LOADED; else
   echo KSU_MISSING
   echo "[ksu] ---- /data/adb/ksu/log ----"
   ls -l /data/adb/ksu/log 2>&1 | head
   for f in /data/adb/ksu/log/*; do [ -f "\$f" ] && { echo "--- \$f ---"; tail -n 30 "\$f"; }; done
-  echo "[ksu] ---- /data/adb/ksu 结构 ----"
-  ls -l /data/adb/ksu 2>&1 | head -20
-  echo "[ksu] ---- insmod $D/ksu.ko ----"
-  insmod $D/ksu.ko 2>&1
-  echo "[ksu] insmod rc=\$?"
-  /system/bin/usleep 1000000
-  grep -q '^kernelsu ' /proc/modules && echo KSU_LOADED || echo KSU_STILL_MISSING
 fi
 echo "[ksu] ---- logcat(ksu/insmod) ----"
 logcat -d -t 400 2>/dev/null | grep -iE 'kernelsu|ksud|insmod|lkm|module' | tail -30
@@ -447,11 +465,6 @@ echo "[ksu] ---- ksud --help ----"
 "\$KSUD" --help 2>&1 | head -40
 echo "[ksu] ---- ksud insmod --help ----"
 "\$KSUD" insmod --help 2>&1 | head -30
-echo "[ksu] ---- try ksud insmod $D/ksu.ko ----"
-"\$KSUD" insmod $D/ksu.ko 2>&1
-echo "[ksu] ksud-insmod rc=\$?"
-/system/bin/usleep 1000000
-grep -q '^kernelsu ' /proc/modules && echo KSU_LOADED_VIA_INSMOD || echo KSU_STILL_MISSING
 echo "[ksu] ---- dmesg: lockdown/lsm/bpf/hks ----"
 dmesg 2>&1 | grep -iE 'lockdown|lsm|bpf|hks-dfd|security' | tail -30
 echo "[ksu] ---- dmesg tail ----"
