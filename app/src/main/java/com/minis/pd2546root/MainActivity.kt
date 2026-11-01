@@ -28,8 +28,9 @@ enum class LogTone { NORMAL, INFO, OK, WARN, ERROR }
 
 data class LogLine(val text: String, val tone: LogTone = LogTone.NORMAL)
 
-/** 内置脚本只针对这一版内核，其他 build 需要自己重算符号表。 */
+/** 前缀用于宽松匹配（不同批次的 -abogki 后缀会变），完整串用于界面显示。 */
 const val TARGET_KERNEL = "6.12.58-android16-6-gdd6fd5c98918"
+const val TARGET_KERNEL_FULL = "6.12.58-android16-6-gdd6fd5c98918-abogki543627742-4k"
 
 /** reroot-local.sh 的 [n/6] 阶段，顺序即进度 */
 val STEP_TITLES = listOf(
@@ -47,7 +48,7 @@ data class DeviceInfo(
     val soc: String = "—",
     val android: String = "—",
     val kernel: String = "",
-    val target: String = TARGET_KERNEL,
+    val target: String = TARGET_KERNEL_FULL,
 )
 
 class RootState {
@@ -141,6 +142,7 @@ class RootActions(
     val onSelectManager: (String?) -> Unit,
     val onImportApk: () -> Unit,
     val onRescan: () -> Unit,
+    val onRefreshDevice: () -> Unit,
 )
 
 class MainActivity : ComponentActivity() {
@@ -192,6 +194,7 @@ class MainActivity : ComponentActivity() {
                         state.pickerVisible = false
                     },
                     onRescan = { refreshManagers() },
+                    onRefreshDevice = { refreshDevice() },
                     onImportApk = {
                         runCatching { pickApk.launch(arrayOf("application/vnd.android.package-archive", "*/*")) }
                             .onFailure { log("[!] 打开文件选择器失败：${it.message}", LogTone.ERROR) }
@@ -229,7 +232,10 @@ class MainActivity : ComponentActivity() {
             model = "$manufacturer ${Build.MODEL}".trim(),
             soc = soc.ifBlank { "—" },
             android = "Android ${Build.VERSION.RELEASE}（API ${Build.VERSION.SDK_INT}）",
-            kernel = state.device.kernel,
+            // System.getProperty("os.version") 就是 uname -r，本地就能读，不需要 Shizuku
+            kernel = runCatching {
+                System.getProperty("os.version")?.trim().orEmpty()
+            }.getOrDefault(""),
         )
     }
 
@@ -252,9 +258,12 @@ class MainActivity : ComponentActivity() {
                 .getOrNull().orEmpty().trim()
             withContext(Dispatchers.Main) {
                 state.device = state.device.copy(
-                    kernel = kernel,
+                    kernel = kernel.ifBlank { state.device.kernel },
                     soc = soc.ifBlank { state.device.soc },
                 )
+                if (state.device.kernel.isBlank()) {
+                    log("[!] 读不到内核版本：Shizuku 的 uname -r 没返回内容", LogTone.ERROR)
+                }
             }
         }
     }
@@ -394,6 +403,18 @@ class MainActivity : ComponentActivity() {
             }.getOrDefault(emptyList())
             withContext(Dispatchers.Main) { state.managers = list }
         }
+    }
+
+    /** 手动刷新设备信息：本地 os.version + Shizuku 的补充信息 */
+    private fun refreshDevice() {
+        state.device = readDevice()
+        refreshManagers()
+        if (state.shizuku == ShizukuState.READY) {
+            loadDevice()
+        } else {
+            log("[*] 设备信息已从系统读取（Shizuku 未授权，跳过 uname 校验）", LogTone.INFO)
+        }
+        state.sheetVisible = true
     }
 
     private fun importApk(uri: android.net.Uri) {

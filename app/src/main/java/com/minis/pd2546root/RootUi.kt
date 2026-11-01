@@ -144,6 +144,15 @@ private fun MainScreen(state: RootState, actions: RootActions, onOpenAdvanced: (
                         onClick = actions.onOpenSheet,
                     )
                     ArrowPreference(
+                        title = "重新读取设备信息",
+                        summary = if (state.device.kernel.isBlank()) {
+                            "内核还没读到，点这里再试一次"
+                        } else {
+                            "内核 ${state.device.kernel}"
+                        },
+                        onClick = actions.onRefreshDevice,
+                    )
+                    ArrowPreference(
                         title = "清理设备端文件",
                         summary = "删除 /data/local/tmp 下的 6 个 payload",
                         onClick = actions.onCleanup,
@@ -227,7 +236,7 @@ private fun statusSpec(state: RootState): StatusSpec {
 
         !state.kernelOk -> StatusSpec(
             amberBg, "内核不匹配",
-            "内置脚本针对 $TARGET_KERNEL，可到设置里强制继续",
+            "内置脚本针对 \n$TARGET_KERNEL_FULL\n可到设置里强制继续",
             Icons.Rounded.ErrorOutline, amber,
         )
 
@@ -805,7 +814,7 @@ private fun AdvancedScreen(state: RootState, onBack: () -> Unit) {
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            text = "目标内核：$TARGET_KERNEL",
+                            text = "目标内核：\n$TARGET_KERNEL_FULL",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Medium,
                         )
