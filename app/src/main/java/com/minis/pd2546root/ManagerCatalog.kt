@@ -50,6 +50,8 @@ object ManagerCatalog {
                     builtin = pi.packageName in BUILTIN,
                 )
             }
+            // 只保留“已知 KSU 家族”或“真的带 libksud.so”的，别把 Chrome 也列出来
+            .filter { it.builtin || it.hasKsud }
             .sortedWith(
                 compareByDescending<Candidate> { it.builtin && it.hasKsud }
                     .thenByDescending { it.hasKsud }
