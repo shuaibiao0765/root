@@ -143,6 +143,7 @@ class RootActions(
     val onImportApk: () -> Unit,
     val onRescan: () -> Unit,
     val onRefreshDevice: () -> Unit,
+    val onPullDeviceLog: () -> Unit,
 )
 
 class MainActivity : ComponentActivity() {
@@ -195,6 +196,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onRescan = { refreshManagers() },
                     onRefreshDevice = { refreshDevice() },
+                    onPullDeviceLog = { pullDeviceLog() },
                     onImportApk = {
                         runCatching { pickApk.launch(arrayOf("application/vnd.android.package-archive", "*/*")) }
                             .onFailure { log("[!] 打开文件选择器失败：${it.message}", LogTone.ERROR) }
@@ -402,6 +404,34 @@ class MainActivity : ComponentActivity() {
                 ManagerCatalog.scan(this@MainActivity, packageName)
             }.getOrDefault(emptyList())
             withContext(Dispatchers.Main) { state.managers = list }
+        }
+    }
+
+    /** 拉取设备端真实状态：fakeR.log、残留进程、内核与 SELinux —— 卡在第二步时用它 */
+    private fun pullDeviceLog() {
+        if (state.shizuku != ShizukuState.READY) {
+            log("[!] 需要先授权 Shizuku 才能读取设备端状态", LogTone.WARN)
+            state.sheetVisible = true
+            return
+        }
+        state.sheetVisible = true
+        lifecycleScope.launch(Dispatchers.IO) {
+            log("[*] 读取设备端状态…", LogTone.INFO)
+            val cmd = "echo '--- uname -r ---'; uname -r; " +
+                "echo '--- getenforce ---'; getenforce 2>&1; " +
+                "echo '--- timer98260 进程 ---'; ps -A 2>/dev/null | grep '[t]imer98260' || echo '(无)'; " +
+                "echo '--- fakeR.log 最后 40 行 ---'; tail -n 40 /data/local/tmp/fakeR.log 2>&1"
+            try {
+                val out = ShizukuRunner.run(cmd)
+                if (out.isBlank()) {
+                    log("    (没有输出)", LogTone.WARN)
+                } else {
+                    out.lineSequence().forEach { line -> log(line) }
+                }
+            } catch (t: Throwable) {
+                log("[!] 读取失败：${t.javaClass.simpleName}: ${t.message}", LogTone.ERROR)
+            }
+            log("[*] 读取完毕", LogTone.INFO)
         }
     }
 

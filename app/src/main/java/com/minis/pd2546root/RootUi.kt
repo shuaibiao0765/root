@@ -83,20 +83,23 @@ fun RootApp(state: RootState, actions: RootActions) {
                 kotlinx.coroutines.delay(1000)
             }
         }
-        Box(Modifier.fillMaxSize()) {
-            when (screen) {
-                RootScreen.Main -> MainScreen(
-                    state = state,
-                    actions = actions,
-                    onOpenAdvanced = { screen = RootScreen.Advanced },
-                )
+        when (screen) {
+            RootScreen.Main -> MainScreen(
+                state = state,
+                actions = actions,
+                onOpenAdvanced = { screen = RootScreen.Advanced },
+                // miuix 的 OverlayBottomSheet 不会在调用处渲染：
+                // 它把状态注册进 Scaffold 提供的 LocalDialogStates，由 Scaffold 的 popupHost 画出来。
+                // 放在 Scaffold 外面就会注册进一个没人渲染的孤立列表 —— 点了没反应、也不报错。
+                sheet = { RootSheet(state = state, actions = actions) },
+            )
 
-                RootScreen.Advanced -> AdvancedScreen(
-                    state = state,
-                    onBack = { screen = RootScreen.Main },
-                )
-            }
-            RootSheet(state = state, actions = actions)
+            RootScreen.Advanced -> AdvancedScreen(
+                state = state,
+                actions = actions,
+                onBack = { screen = RootScreen.Main },
+                sheet = { RootSheet(state = state, actions = actions) },
+            )
         }
     }
 }
@@ -175,6 +178,8 @@ private fun MainScreen(state: RootState, actions: RootActions, onOpenAdvanced: (
                 RunButton(state = state, actions = actions)
             }
         }
+        // 关键：浮层要在 Scaffold 的 content 里组合，才会真的被 popupHost 画出来
+        sheet()
     }
 }
 
@@ -721,7 +726,12 @@ private fun ManagerRow(
 // ---------------- 高级选项 ----------------
 
 @Composable
-private fun AdvancedScreen(state: RootState, onBack: () -> Unit) {
+private fun AdvancedScreen(
+    state: RootState,
+    actions: RootActions,
+    onBack: () -> Unit,
+    sheet: @Composable () -> Unit = {},
+) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -769,6 +779,15 @@ private fun AdvancedScreen(state: RootState, onBack: () -> Unit) {
                             "上次执行" to state.lastRunAt,
                             "退出码" to (state.exitCode?.toString() ?: "—"),
                         ),
+                    )
+                }
+            }
+            item {
+                Card(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                    ArrowPreference(
+                        title = "读取设备端状态",
+                        summary = "uname / getenforce / timer98260 进程 / fakeR.log 末尾 40 行",
+                        onClick = actions.onPullDeviceLog,
                     )
                 }
             }
@@ -836,6 +855,7 @@ private fun AdvancedScreen(state: RootState, onBack: () -> Unit) {
                 }
             }
         }
+        sheet()
     }
 }
 
