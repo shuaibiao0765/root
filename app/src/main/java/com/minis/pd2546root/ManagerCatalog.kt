@@ -151,7 +151,11 @@ object KsudImporter {
 
     fun openKsud(apk: File): Pair<ZipFile, InputStream> {
         val zip = ZipFile(apk)
-        val entry = ENTRIES.firstOrNull { zip.getEntry(it) != null } ?: run {
+        val name = ENTRIES.firstOrNull { zip.getEntry(it) != null } ?: run {
+            zip.close()
+            error("APK 里没找到 ksud")
+        }
+        val entry = zip.getEntry(name) ?: run {
             zip.close()
             error("APK 里没找到 ksud")
         }
