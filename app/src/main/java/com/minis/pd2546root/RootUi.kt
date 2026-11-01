@@ -107,7 +107,12 @@ fun RootApp(state: RootState, actions: RootActions) {
 // ---------------- 主屏 ----------------
 
 @Composable
-private fun MainScreen(state: RootState, actions: RootActions, onOpenAdvanced: () -> Unit) {
+private fun MainScreen(
+    state: RootState,
+    actions: RootActions,
+    onOpenAdvanced: () -> Unit,
+    sheet: @Composable () -> Unit = {},
+) {
     val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
     Scaffold(
         modifier = Modifier.fillMaxSize(),
