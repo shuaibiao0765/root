@@ -169,6 +169,7 @@ KMI=${PD_KMI:-android16-6.12}
 KEXP='6.12.58-android16-6-gdd6fd5c98918'
 KV=$(uname -r)
 say "  kernel=$KV"
+say "  modules_disabled=$(cat /proc/sys/kernel/modules_disabled 2>/dev/null || echo '?')  lockdown=$(cat /sys/kernel/security/lockdown 2>/dev/null || echo '?')"
 case "$KV" in
   *"$KEXP"*) ;;
   *)
@@ -372,6 +373,19 @@ else
 fi
 say "  ALL PLANTS OK"
 
+# ---------- 4.5 模块加载开关 ----------
+_md=$(cat /proc/sys/kernel/modules_disabled 2>/dev/null)
+say "== 模块加载开关 modules_disabled=${_md:-?} =="
+if [ "$_md" = "1" ]; then
+  say "  内核禁止加载模块（insmod 会 EPERM），用 plant 把 modules_disabled 清 0"
+  hexadd ffffffc08279c278 "$SLIDE"
+  plant "$HOUT" 0 || die "清 modules_disabled 失败"
+  kread "$HOUT"
+  say "  modules_disabled after = ${KV0:-?}"
+else
+  say "  modules_disabled 不是 1。若稍后 insmod 仍 EPERM，则是 kernel lockdown。"
+fi
+
 # ---------- 5. kallsyms ----------
 say "[6/7] 生成 kallsyms（128943 行，全部加 slide）"
 awk -v s="$SLIDE" "$HEXADD"'
@@ -426,6 +440,8 @@ if grep -q '^kernelsu ' /proc/modules; then echo KSU_LOADED; else
   /system/bin/usleep 1000000
   grep -q '^kernelsu ' /proc/modules && echo KSU_LOADED || echo KSU_STILL_MISSING
 fi
+echo "[ksu] ---- logcat(ksu/insmod) ----"
+logcat -d -t 400 2>/dev/null | grep -iE 'kernelsu|ksud|insmod|lkm|module' | tail -30
 echo "[ksu] ---- dmesg tail ----"
 dmesg 2>&1 | tail -n 40
 echo "[ksu] enforce=\$(getenforce)"
@@ -467,7 +483,8 @@ case "$OUT" in
     dump_log
     exit 0 ;;
 esac
-say "[X] 验证没通过。确认管理器 $PKG 已安装且与 ksud 版本一致，再重跑。"
-say "    （kernelsu 已加载但拿不到 su：多半是 ksud 与管理器版本不一致）"
+say "[X] 验证没通过：内核里没有 kernelsu 模块。"
+say "    跟管理器版本无关。看上面 dmesg / avc denied / insmod 那几行，"
+say "    常见原因是 modules_disabled=1 或 kernel lockdown。"
 dump_log
 exit 1
