@@ -446,8 +446,21 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val list = runCatching {
                 ManagerCatalog.scan(this@MainActivity, packageName)
+            }.onFailure {
+                log("[!] 扫描管理器失败：${it.javaClass.simpleName}: ${it.message}", LogTone.WARN)
             }.getOrDefault(emptyList())
             withContext(Dispatchers.Main) { state.managers = list }
+            if (list.isEmpty()) {
+                log("[!] 没扫到已装的管理器。装 KernelSU 32707 后点「根管理器 → 重新扫描」", LogTone.WARN)
+            } else {
+                list.forEach { c ->
+                    log(
+                        "    · ${c.packageName} ${c.version}" +
+                            if (c.hasKsud) "（带 libksud.so）" else "（没带 ksud，用内置）",
+                        LogTone.NORMAL,
+                    )
+                }
+            }
         }
     }
 

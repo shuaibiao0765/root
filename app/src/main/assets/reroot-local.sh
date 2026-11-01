@@ -390,9 +390,7 @@ echo ===LOAD===
 echo "[ksu] stage v3.4 inline"
 id
 echo "[ksu] ---- 管理器 ----"
-echo "[ksu] pkg=$PKG"
-pm path $PKG 2>&1 | head -2
-dumpsys package $PKG 2>/dev/null | grep -m3 -E 'versionName|versionCode|lastUpdateTime' 
+echo "[ksu] pkg=$PKG（fake root 里 pm/dumpsys 连不上 servicemanager，管理器版本由 App 侧打印）"
 cat /sys/module/module/parameters/sig_enforce
 mkdir -p /data/adb
 cp $D/kall /data/adb/kall 2>/dev/null
@@ -445,9 +443,11 @@ done
 sleep 2
 
 say ''
-say "---- late-load 输出（来自设备端 fakeR.log）----"
-awk '/===LOAD===/{f=1} f' "$LOG" 2>/dev/null | head -n 40 > "$D/.pd_load"
-while IFS= read -r _l; do say "  $_l"; done < "$D/.pd_load"
+say "---- late-load 输出（来自设备端 fakeR.log，挑关键行）----"
+awk '/===LOAD===/{f=1} f' "$LOG" 2>/dev/null > "$D/.pd_load"
+say "  （设备端 LOAD 段共 $(wc -l < "$D/.pd_load" | tr -d ' ') 行）"
+grep -aE '\[ksu\]|kernelsu|insmod|LATE_RC|KSU_|error|Error|failed|deny|denied|vermagi|invalid|reject' "$D/.pd_load" \
+  | head -n 120 | while IFS= read -r _l; do say "  $_l"; done
 rm -f "$D/.pd_load"
 say "---- ----"
 

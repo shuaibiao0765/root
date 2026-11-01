@@ -5,6 +5,20 @@
     <!-- 扫描已装的 KernelSU 家族管理器（找它们的 libksud.so） -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
 
+
+    <!-- Android 11+ 包可见性：不写这些，扫描会把管理器当不存在 -->
+    <queries>
+        <package android:name="me.weishu.kernelsu" />
+        <package android:name="me.weishu.kernelsu.pr" />
+        <package android:name="com.resukisu.resukisu" />
+        <package android:name="com.kowx712.supermanager" />
+        <package android:name="org.bakasu.bakasu" />
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"

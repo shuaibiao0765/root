@@ -85,23 +85,24 @@ fun RootApp(state: RootState, actions: RootActions) {
                 kotlinx.coroutines.delay(1000)
             }
         }
-        when (screen) {
-            RootScreen.Main -> MainScreen(
-                state = state,
-                actions = actions,
-                onOpenAdvanced = { screen = RootScreen.Advanced },
-                // miuix 的 OverlayBottomSheet 不会在调用处渲染：
-                // 它把状态注册进 Scaffold 提供的 LocalDialogStates，由 Scaffold 的 popupHost 画出来。
-                // 放在 Scaffold 外面就会注册进一个没人渲染的孤立列表 —— 点了没反应、也不报错。
-                sheet = { RootSheet(state = state, actions = actions) },
-            )
+        // 原来的 OverlayBottomSheet 一点就闪退，这里彻底不用浮层：
+        // 根管理器直接是一整页，日志常驻主屏。
+        if (state.pickerVisible) {
+            ManagerScreen(state = state, actions = actions)
+        } else {
+            when (screen) {
+                RootScreen.Main -> MainScreen(
+                    state = state,
+                    actions = actions,
+                    onOpenAdvanced = { screen = RootScreen.Advanced },
+                )
 
-            RootScreen.Advanced -> AdvancedScreen(
-                state = state,
-                actions = actions,
-                onBack = { screen = RootScreen.Main },
-                sheet = { RootSheet(state = state, actions = actions) },
-            )
+                RootScreen.Advanced -> AdvancedScreen(
+                    state = state,
+                    actions = actions,
+                    onBack = { screen = RootScreen.Main },
+                )
+            }
         }
     }
 }
@@ -400,6 +401,33 @@ private fun RunButton(state: RootState, actions: RootActions) {
 }
 
 // ---------------- 单一浮层：日志 / 根管理器共用 ----------------
+
+@Composable
+private fun ManagerScreen(state: RootState, actions: RootActions) {
+    val scrollBehavior = MiuixScrollBehavior(rememberTopAppBarState())
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            SmallTopAppBar(
+                title = "根管理器",
+                titleColor = MiuixTheme.colorScheme.onSurface,
+                scrollBehavior = scrollBehavior,
+                navigationIcon = {
+                    IconButton(onClick = actions.onDismissPicker) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "返回",
+                        )
+                    }
+                },
+            )
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding)) {
+            ManagerSheetContent(state, actions)
+        }
+    }
+}
 
 @Composable
 private fun RootSheet(state: RootState, actions: RootActions) {

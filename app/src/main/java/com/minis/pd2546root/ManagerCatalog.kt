@@ -46,33 +46,45 @@ object ManagerCatalog {
     fun looksLikeManager(packageName: String): Boolean =
         packageName in BUILTIN || NAME_HINTS.any { packageName.contains(it, ignoreCase = true) }
 
-    /** 扫描非系统应用；已知 KSU 家族、包名像管理器、或真带 libksud.so 的都算 */
+    /** 扫描已装的管理器；已知 KSU 家族、包名像管理器、或真带 libksud.so 的都算 */
     fun scan(ctx: Context, selfPackage: String): List<Candidate> {
         val pm = ctx.packageManager
-        return pm.getInstalledPackages(0)
-            .asSequence()
-            .mapNotNull { pi -> pi.applicationInfo?.let { pi to it } }
-            .filter { (pi, _) -> pi.packageName != selfPackage }
-            .filter { (_, ai) -> (ai.flags and ApplicationInfo.FLAG_SYSTEM) == 0 }
-            .map { (pi, ai) ->
-                val lib = ai.nativeLibraryDir?.let { dir -> File(dir, "libksud.so") }
-                Candidate(
-                    packageName = pi.packageName,
-                    label = runCatching { ai.loadLabel(pm).toString() }
-                        .getOrDefault(pi.packageName),
-                    versionName = pi.versionName.orEmpty(),
-                    versionCode = pi.longVersionCode,
-                    libPath = lib?.takeIf { it.isFile }?.absolutePath,
-                    builtin = pi.packageName in BUILTIN,
-                )
-            }
-            .filter { it.builtin || it.hasKsud || looksLikeManager(it.packageName) }
-            .sortedWith(
-                compareByDescending<Candidate> { it.builtin }
-                    .thenByDescending { it.hasKsud }
-                    .thenBy { it.label.lowercase() },
+        val found = LinkedHashMap<String, Candidate>()
+
+        fun consider(pi: android.content.pm.PackageInfo) {
+            if (pi.packageName == selfPackage) return
+            val ai = pi.applicationInfo ?: return
+            val lib = ai.nativeLibraryDir?.let { dir -> File(dir, "libksud.so") }
+            val c = Candidate(
+                packageName = pi.packageName,
+                label = runCatching { ai.loadLabel(pm).toString() }.getOrDefault(pi.packageName),
+                versionName = pi.versionName.orEmpty(),
+                versionCode = pi.longVersionCode,
+                libPath = lib?.takeIf { it.isFile }?.absolutePath,
+                builtin = pi.packageName in BUILTIN,
             )
-            .toList()
+            if (c.builtin || c.hasKsud || looksLikeManager(c.packageName)) {
+                found[c.packageName] = c
+            }
+        }
+
+        runCatching { pm.getInstalledPackages(0) }
+            .onFailure { /* 分组隔离的 ROM 会抛，下面再点名补 */ }
+            .getOrDefault(emptyList())
+            .forEach { consider(it) }
+
+        // 有些系统（vivo/OPPO 的隔离、或包可见性没给全）getInstalledPackages 看不到，
+        // 这里对已知包名逐个点名再试一次。
+        (BUILTIN + "me.weishu.kernelsu").distinct().forEach { pkg ->
+            if (found.containsKey(pkg)) return@forEach
+            runCatching { pm.getPackageInfo(pkg, 0) }.getOrNull()?.let { consider(it) }
+        }
+
+        return found.values.sortedWith(
+            compareByDescending<Candidate> { it.builtin }
+                .thenByDescending { it.hasKsud }
+                .thenBy { it.label.lowercase() },
+        )
     }
 }
 
