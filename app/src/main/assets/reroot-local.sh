@@ -29,11 +29,11 @@ TRACE_SYS_EXIT=ffffffc0826d93e0
 # 所有 say 的东西同时攒一份到 $RUNLOG：App 端日志浮层要是没弹出来，
 # 事后用「拉取设备端状态」或 adb 直接 cat 这个文件就能看到跑到了哪一步。
 RUNLOG="$D/run.log"
-BUF=""
-say() { BUF="$BUF$*
-"; echo "$*"; }
-dump_log() { printf '%s' "$BUF" > "$RUNLOG" 2>/dev/null; }
-die() { say "[X] $*"; dump_log; exit 2; }
+# 每行直接追加落盘（不是退出时才写）：plant 阶段真要 panic 重启，
+# 重启后也能看到日志最后停在哪一行。
+say() { printf '%s\n' "$*" >> "$RUNLOG" 2>/dev/null; echo "$*"; }
+dump_log() { :; }
+die() { say "[X] $*"; exit 2; }
 
 # ---------- 32 位分半的十六进制运算（全内建，不 fork） ----------
 HEXD=0123456789abcdef
