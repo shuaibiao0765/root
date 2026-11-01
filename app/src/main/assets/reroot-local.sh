@@ -438,8 +438,11 @@ fi
 echo "[ksu] ---- logcat(ksu/insmod) ----"
 logcat -d -t 400 2>/dev/null | grep -iE 'kernelsu|ksud|insmod|lkm|module' | tail -30
 echo "[ksu] ---- lsm / securityfs ----"
+mount -t securityfs securityfs /sys/kernel/security 2>&1
 cat /sys/kernel/security/lsm 2>&1
 ls -l /sys/kernel/security 2>&1 | head -20
+echo "[ksu] ---- /proc/modules（找 vivo 安全模块）----"
+cat /proc/modules 2>&1 | head -60
 echo "[ksu] ---- ksud --help ----"
 "\$KSUD" --help 2>&1 | head -40
 echo "[ksu] ---- ksud insmod --help ----"
