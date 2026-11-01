@@ -33,6 +33,8 @@ RUNLOG="$D/run.log"
 # 重启后也能看到日志最后停在哪一行。
 say() { printf '%s\n' "$*" >> "$RUNLOG" 2>/dev/null; echo "$*"; }
 dump_log() { :; }
+mark() { echo "$1" > /data/local/tmp/.pd_step 2>/dev/null; }
+MARK=''
 die() { say "[X] $*"; exit 2; }
 
 # ---------- 64 位地址运算 ----------
@@ -156,6 +158,7 @@ zero_check() { # $1=标签
 
 # ---------- 0. 环境 ----------
 rm -f "$RUNLOG"
+mark "start"
 say "== PD2546 设备端重 root · $(date '+%m-%d %H:%M:%S' 2>/dev/null) =="
 say "  App 端日志浮层看不到东西时，跑完到这里 cat $RUNLOG"
 say "[1/7] 环境检查"
@@ -253,6 +256,7 @@ fi
 
 SLIDE=$(grep -o 'slide=0x[0-9a-f]*' "$LOG" 2>/dev/null | tail -1 | sed 's/.*0x//')
 [ -n "$SLIDE" ] || die "日志里没有 slide"
+mark "ready-$SLIDE"
 say "  READY slide=0x$SLIDE"
 
 hadd "$IMAGE_BASE" "$SLIDE"; BASE="$HOUT"
@@ -379,9 +383,11 @@ say "== 模块加载开关 modules_disabled=${_md:-?} =="
 if [ "$_md" = "1" ]; then
   say "  内核禁止加载模块（insmod 会 EPERM），用 plant 把 modules_disabled 清 0"
   hexadd ffffffc08279c278 "$SLIDE"
+  mark "zero-modd-0x$HOUT"
   plant "$HOUT" 0 || die "清 modules_disabled 失败"
   kread "$HOUT"
   say "  modules_disabled after = ${KV0:-?}"
+  case "${KV0:-}" in 0) mark "zero-modd-ok" ;; *) say "[X] 回读不是 0，地址可能不对，停在这里不继续"; die "modules_disabled 清零未验证" ;; esac
 else
   say "  modules_disabled 不是 1。若稍后 insmod 仍 EPERM，则是 kernel lockdown。"
 fi
@@ -396,6 +402,7 @@ say "  KALLSYMS_OK $_kc 个符号"
 [ "$_kc" = "128943" ] || say "  [!] 行数不是 128943，ksud 找符号会失败"
 
 # ---------- 6. late-load ----------
+mark "late-load"
 say "[7/7] ksud late-load（install → late-load → 取证）"
 # 这一段直接内联进 chan/run，不再依赖外部 ksu_stage.sh 文件
 # （上一版设备上跑的仍是旧脚本，白丢一轮）。
@@ -478,6 +485,7 @@ case "$OUT" in
   *kernelsu*u:r:ksu:s0*)
     say ''
     say '========================================'
+    mark "DONE"
     say '  KSU_ROOT_OK  root 已就绪（u:r:ksu:s0）'
     say '========================================'
     dump_log
