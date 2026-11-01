@@ -25,6 +25,9 @@
 - **状态卡**：Shizuku 未连接 / 需要授权 / 正在读内核 / 内核不匹配 / 已就绪 / 执行中，
   配色沿用 GhostLock 的绿-琥珀-红三档，右侧超大水印图标 `offset(27dp, 31dp)` 裁切
 - **设备信息卡**：设备 / 芯片 / 系统 / 内核（`uname -r`），可长按选择复制
+- **根管理器**：自动扫描已装的 KernelSU 家族（KernelSU / ReSukiSU / BakaSU / KowSU…），
+  谁带 `libksud.so` 就用谁的；也能**导入任意管理器 APK**（含 canary / 测试版），
+  运行时把它的 `lib/arm64-v8a/libksud.so` 当 `ksud` 推下去，并把包名通过 `PD_PKG` 传给脚本
 - **设置**：执行日志、清理 `/data/local/tmp`、强制在未验证内核上运行、执行时保持唤醒
 - **执行按钮**：不可执行时点按钮会直接弹日志浮层告诉你怎么解卡
 - **日志浮层**：`OverlayBottomSheet`，执行中不可下滑关闭；按行着色（绿=成功 红=失败 黄=警告 蓝=步骤）
@@ -53,6 +56,17 @@ git push          # 触发 .github/workflows/build.yml
 ```
 
 Android Studio 打开也能直接编译（需要 SDK 37）。
+
+## 管理器 / ksud 版本
+
+内核模块和 App 必须版本对得上，否则会出现「root 有了但管理器提示内核版本不匹配」。所以：
+
+1. `reroot-local.sh` 里 `--package-name` 不再写死 `me.weishu.kernelsu`，改成 `${PD_PKG}`
+2. `ksud` 也不再固定用内置那份：按 App 里的选择，依次取
+   - 导入的 APK 里的 `lib/arm64-v8a/libksud.so`
+   - 已装管理器 APK 的 `nativeLibraryDir/libksud.so`
+   - 都没有才回退到内置的 KernelSU 32707
+3. KMI 默认 `android16-6.12`，需要时可用 `PD_KMI` 覆盖
 
 ## 与 GhostLock 的差异
 
