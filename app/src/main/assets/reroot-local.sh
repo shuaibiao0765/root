@@ -179,7 +179,7 @@ case "$KV" in
     ;;
 esac
 
-for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh symbols.txt; do
+for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh ksu.ko symbols.txt; do
   if [ ! -f "$D/$f" ]; then
     [ -f "$SRC/$f" ] || die "缺少 $SRC/$f（先把解压出来的 linux/files 放到 /sdcard/Download/pd2546/）"
     cp -f "$SRC/$f" "$D/$f" || die "拷贝 $f 失败"
@@ -187,7 +187,7 @@ for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh symbols.txt; do
 done
 chmod 755 "$D/timer98260" "$D/ksud" "$D/probe" "$D/fake_shell.sh" "$D/ksu_stage.sh"
 say "  设备上实际的文件："
-for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh symbols.txt; do
+for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh ksu.ko symbols.txt; do
   say "    $f  $(wc -c < "$D/$f" 2>/dev/null | tr -d ' ') 字节"
 done
 mkdir -p "$CH"; chmod 777 "$CH"

@@ -17,6 +17,7 @@ object ShizukuRunner {
         "probe",
         "fake_shell.sh",
         "ksu_stage.sh",
+        "ksu.ko",
         "symbols.txt",
     )
 

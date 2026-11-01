@@ -1,15 +1,14 @@
 #!/system/bin/sh
-# 在 fake root shell（u:r:kernel:s0 → 写入后 u:r:ksu:s0）里跑：
-#   ksud install → late-load → 等 /proc/modules 出现 kernelsu
-# 参考机（iQOO PD2546）2026-11-01 那轮的驱动方式，原样搬过来。
+# 在 fake root shell（u:r:kernel:s0）里跑：install → late-load → 回读验证。
+# ksud 自己把日志写进 /data/adb/ksu/log/，stdout 基本是空的，
+# 所以这里每一步都把 rc、ksud 日志、dmesg 尾巴全部打出来。
 D=${PD_D:-/data/local/tmp}
 PKG=${PD_PKG:-me.weishu.kernelsu}
 KMI=${PD_KMI:-android16-6.12}
 
 echo "[ksu] start uid=$(id -u) selinux=$(getenforce)"
-grep -E '^(Cap|Seccomp)' /proc/self/status
+grep -E '^(CapEff|Seccomp)' /proc/self/status
 
-# ksud 优先用管理器自己带的（版本必须和管理器一致，否则管理器会显示异常）
 APK=$(pm path "$PKG" 2>/dev/null | head -1 | cut -d: -f2)
 KSUD=''
 if [ -n "$APK" ]; then KSUD="$(dirname "$APK")/lib/arm64/libksud.so"; fi
@@ -18,24 +17,58 @@ if [ -n "$APK" ]; then KSUD="$(dirname "$APK")/lib/arm64/libksud.so"; fi
 [ -x "$KSUD" ] || KSUD=/data/adb/ksu/bin/ksud
 [ -x "$D/ksud" ] && KSUD=$D/ksud
 if [ ! -x "$KSUD" ]; then echo '[ksu] ksud missing'; exit 1; fi
-echo "[ksu] ksud=$KSUD version=$("$KSUD" --version 2>&1 | head -1)"
+echo "[ksu] ksud=$KSUD"
+echo "[ksu] version=$("$KSUD" --version 2>&1 | head -1)"
+ls -l "$D/ksud"
 
-# install 不能省：它建 /data/adb/ksu 的目录结构和模块表，
-# 少了这步 late-load 出来的内核模块管理器认不出来（会显示异常/无 su）。
-"$KSUD" install
+mkdir -p /data/adb 2>/dev/null
+echo "[ksu] kall 行数=$(wc -l < /data/adb/kall 2>/dev/null)"
+
+"$KSUD" install > "$D/install.log" 2>&1
 echo "[ksu] install rc=$?"
+sed -n '1,20p' "$D/install.log" 2>/dev/null
 
-"$KSUD" late-load --kmi "$KMI" --allow-shell --package-name "$PKG"
-echo "[ksu] late-load rc=$?"
+"$KSUD" late-load --kmi "$KMI" --allow-shell --package-name "$PKG" > "$D/late.log" 2>&1
+RC=$?
+echo "[ksu] late-load rc=$RC"
+sed -n '1,40p' "$D/late.log" 2>/dev/null
+
 if ! grep -q '^kernelsu ' /proc/modules; then
-  "$KSUD" late-load --allow-shell --package-name "$PKG"
+  "$KSUD" late-load --allow-shell --package-name "$PKG" > "$D/late2.log" 2>&1
   echo "[ksu] late-load2 rc=$?"
+  sed -n '1,40p' "$D/late2.log" 2>/dev/null
 fi
+
 i=0
-while [ $i -lt 50 ]; do
+while [ $i -lt 20 ]; do
   grep -q '^kernelsu ' /proc/modules && break
-  i=$((i+1)); sleep 0.1
+  i=$((i+1)); /system/bin/usleep 200000
 done
-if grep -q '^kernelsu ' /proc/modules; then echo KSU_LOADED; else echo KSU_MISSING; fi
+
+if ! grep -q '^kernelsu ' /proc/modules; then
+  echo "[ksu] ---- ksud 自己的日志 ----"
+  ls -l /data/adb/ksu/log 2>&1 | head -10
+  for f in /data/adb/ksu/log/*; do
+    [ -f "$f" ] && { echo "--- $f ---"; tail -n 40 "$f"; }
+  done
+  echo "[ksu] ---- /data/adb/ksu 结构 ----"
+  ls -l /data/adb/ksu 2>&1 | head -20
+  echo "[ksu] ---- 直接 insmod 内置 LKM ----"
+  if [ -f "$D/ksu.ko" ]; then
+    insmod "$D/ksu.ko" 2>&1
+    echo "[ksu] insmod rc=$?"
+    /system/bin/usleep 500000
+  else
+    echo "[ksu] 没有 $D/ksu.ko"
+  fi
+  echo "[ksu] ---- dmesg 尾巴（vermagi/signature 错误都在这）----"
+  dmesg 2>&1 | tail -n 40
+fi
+
+if grep -q '^kernelsu ' /proc/modules; then
+  echo KSU_LOADED
+else
+  echo KSU_MISSING
+fi
 echo "[ksu] enforce=$(getenforce)"
 echo "[ksu] whoami=$(id)"
