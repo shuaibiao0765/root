@@ -128,6 +128,10 @@ say "[0/6] 环境检查"
 say "  id=$(id)"
 [ "$(id -u)" = "2000" ] || say "[!] 不是 uid=2000，请确认在 rish 里运行"
 
+# PD_PKG：管理器包名（App 里选的根管理器），PD_KMI：late-load 的 KMI 串
+PKG=${PD_PKG:-me.weishu.kernelsu}
+KMI=${PD_KMI:-android16-6.12}
+
 KEXP='6.12.58-android16-6-gdd6fd5c98918'
 KV=$(uname -r)
 say "  kernel=$KV"
@@ -303,7 +307,7 @@ say "[6/6] ksud late-load"
   echo 'mkdir -p /data/adb'
   echo "cp $D/kall /data/adb/kall"
   echo 'chmod 644 /data/adb/kall'
-  echo "$D/ksud late-load --kmi android16-6.12 --allow-shell --package-name me.weishu.kernelsu"
+  echo "$D/ksud late-load --kmi $KMI --allow-shell --package-name $PKG"
   echo 'echo LATE_RC=$?'
   echo 'sleep 2'
   echo 'grep kernelsu /proc/modules'
@@ -330,5 +334,5 @@ case "$OUT" in
     say '========================================'
     exit 0 ;;
 esac
-say '[X] 验证没通过。先装管理器（KernelSU 32707）再重跑。'
+say "[X] 验证没通过。确认管理器 $PKG 已安装且与 ksud 版本一致，再重跑。"
 exit 1

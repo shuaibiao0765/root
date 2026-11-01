@@ -88,6 +88,7 @@ fun RootApp(state: RootState, actions: RootActions) {
                 )
             }
             LogSheet(state = state, actions = actions)
+            ManagerSheet(state = state, actions = actions)
         }
     }
 }
@@ -123,6 +124,11 @@ private fun MainScreen(state: RootState, actions: RootActions, onOpenAdvanced: (
             }
             item(key = "settings") {
                 Card {
+                    ArrowPreference(
+                        title = "根管理器",
+                        summary = state.managerSummary,
+                        onClick = actions.onOpenPicker,
+                    )
                     ArrowPreference(
                         title = "执行日志",
                         summary = if (state.logs.isEmpty()) "还没有输出" else "最近 ${state.logs.size} 行",
@@ -426,6 +432,114 @@ private fun toneColor(tone: LogTone): Color = when (tone) {
     LogTone.WARN -> Color(0xFFFFC94D)
     LogTone.INFO -> Color(0xFF60A5FA)
     LogTone.NORMAL -> Color(0xFFD1D5DB)
+}
+
+// ---------------- 根管理器选择 ----------------
+
+@Composable
+private fun ManagerSheet(state: RootState, actions: RootActions) {
+    val imported = state.imported
+    val chosen = state.selectedPackage
+
+    OverlayBottomSheet(
+        show = state.pickerVisible,
+        title = "根管理器",
+        allowDismiss = true,
+        onDismissRequest = actions.onDismissPicker,
+        endAction = {
+            IconButton(onClick = actions.onDismissPicker) {
+                Icon(imageVector = Icons.Rounded.Close, contentDescription = "关闭")
+            }
+        },
+        content = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 240.dp, max = 520.dp)
+                    .navigationBarsPadding(),
+                contentPadding = PaddingValues(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item(key = "builtin") {
+                    Card {
+                        ManagerRow(
+                            title = "内置 ksud",
+                            subtitle = "自带的 KernelSU 32707，兼容老版管理器",
+                            selected = imported == null && chosen == null,
+                            onClick = { actions.onSelectManager(null) },
+                        )
+                    }
+                }
+
+                if (imported != null) {
+                    item(key = "imported") {
+                        Card {
+                            ManagerRow(
+                                title = "${imported.label} ${imported.version}",
+                                subtitle = "${imported.packageName} · 来自导入的 APK",
+                                selected = chosen == imported.packageName,
+                                onClick = { actions.onSelectManager(imported.packageName) },
+                            )
+                        }
+                    }
+                }
+
+                if (state.managers.isNotEmpty()) {
+                    item(key = "installed-title") {
+                        Box(Modifier.padding(start = 4.dp, top = 4.dp)) {
+                            SmallTitle(text = "已安装的管理器")
+                        }
+                    }
+                    items(state.managers) { candidate ->
+                        Card {
+                            ManagerRow(
+                                title = "${candidate.label} ${candidate.version}",
+                                subtitle = "${candidate.packageName} · " +
+                                    if (candidate.hasKsud) "带 libksud.so" else "没带 ksud，会用内置",
+                                selected = chosen == candidate.packageName && imported == null,
+                                onClick = { actions.onSelectManager(candidate.packageName) },
+                            )
+                        }
+                    }
+                }
+
+                item(key = "import") {
+                    Card {
+                        ArrowPreference(
+                            title = "导入管理器 APK…",
+                            summary = "任意 KernelSU 版本，含 canary / 测试版；取出其中的 libksud.so",
+                            onClick = actions.onImportApk,
+                        )
+                    }
+                }
+
+                item(key = "hint") {
+                    Box(Modifier.padding(start = 4.dp, top = 4.dp, end = 4.dp)) {
+                        Text(
+                            text = "内核模块和管理器必须版本对得上：装了新版管理器就导入新版 APK，" +
+                                "否则 root 起来了管理器也可能提示“内核版本不匹配”。",
+                            fontSize = 12.sp,
+                            color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        )
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun ManagerRow(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    ArrowPreference(
+        title = if (selected) "✓ $title" else title,
+        summary = subtitle,
+        onClick = onClick,
+    )
 }
 
 // ---------------- 高级选项 ----------------

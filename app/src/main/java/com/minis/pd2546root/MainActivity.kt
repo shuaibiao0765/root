@@ -41,6 +41,10 @@ data class DeviceInfo(
 
 class RootState {
     var shizuku by mutableStateOf(ShizukuState.NOT_RUNNING)
+    var managers by mutableStateOf<List<ManagerCatalog.Candidate>>(emptyList())
+    var selectedPackage by mutableStateOf<String?>(null)
+    var imported by mutableStateOf<KsudImporter.Imported?>(null)
+    var pickerVisible by mutableStateOf(false)
     var device by mutableStateOf(DeviceInfo())
     var running by mutableStateOf(false)
     var sheetVisible by mutableStateOf(false)
@@ -65,6 +69,33 @@ class RootState {
 
     val runnable: Boolean
         get() = shizuku == ShizukuState.READY && kernelOk && !running
+
+    val chosenManager: ManagerCatalog.Candidate?
+        get() = managers.firstOrNull { it.packageName == selectedPackage }
+
+    /** 真正交给 reroot-local.sh 的管理器包名 */
+    val managerPackage: String
+        get() = imported?.packageName ?: selectedPackage ?: "me.weishu.kernelsu"
+
+    val managerLabel: String
+        get() {
+            imported?.let { return "${it.label} ${it.version}（导入）" }
+            chosenManager?.let { return "${it.label} ${it.version}" }
+            return "内置 ksud（KernelSU 32707）"
+        }
+
+    val managerSummary: String
+        get() {
+            imported?.let { return "${it.packageName} · ${it.version} · 来自导入的 APK" }
+            chosenManager?.let { c ->
+                return if (c.hasKsud) {
+                    "${c.packageName} · ${c.version} · 使用它自带的 libksud.so"
+                } else {
+                    "${c.packageName} · ${c.version} · 没带 ksud，仍用内置"
+                }
+            }
+            return "自动检测；也可以导入任意版本的 KernelSU 管理器 APK"
+        }
 }
 
 class RootActions(
@@ -76,11 +107,20 @@ class RootActions(
     val onCleanup: () -> Unit,
     val onForceChanged: (Boolean) -> Unit,
     val onKeepAwakeChanged: (Boolean) -> Unit,
+    val onOpenPicker: () -> Unit,
+    val onDismissPicker: () -> Unit,
+    val onSelectManager: (String?) -> Unit,
+    val onImportApk: () -> Unit,
 )
 
 class MainActivity : ComponentActivity() {
 
     private val state = RootState()
+
+    /** 选一个管理器 APK 导入：任意 KernelSU 版本（含 canary）都行 */
+    private val pickApk = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(::importApk) }
 
     private val permissionListener =
         Shizuku.OnRequestPermissionResultListener { _, result ->
@@ -114,14 +154,31 @@ class MainActivity : ComponentActivity() {
                         state.keepAwake = it
                         applyKeepAwake()
                     },
+                    onOpenPicker = { state.pickerVisible = true },
+                    onDismissPicker = { state.pickerVisible = false },
+                    onSelectManager = { pkg ->
+                        state.selectedPackage = pkg
+                        state.imported = null
+                        state.pickerVisible = false
+                    },
+                    onImportApk = {
+                        runCatching { pickApk.launch(arrayOf("application/vnd.android.package-archive", "*/*")) }
+                            .onFailure { log("[!] 打开文件选择器失败：${it.message}", LogTone.ERROR) }
+                    },
                 ),
             )
         }
 
+        refreshManagers()
         Shizuku.addBinderReceivedListenerSticky { refreshShizuku() }
         Shizuku.addBinderDeadListener { refreshShizuku() }
         Shizuku.addRequestPermissionResultListener(permissionListener)
         refreshShizuku()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshManagers()
     }
 
     override fun onDestroy() {
@@ -237,17 +294,24 @@ class MainActivity : ComponentActivity() {
             try {
                 log("[*] 推送 payload 到 /data/local/tmp", LogTone.INFO)
                 for (name in ShizukuRunner.PAYLOAD) {
+                    if (name == "ksud") continue // 由所选管理器决定版本，下面单独推
                     ShizukuRunner.pushAsset(this@MainActivity, name, "/data/local/tmp/$name")
                     log("    ✓ $name", LogTone.NORMAL)
                 }
+                pushKsud { log(it, LogTone.NORMAL) }
+                log("[-] 管理器：${state.managerPackage}", LogTone.INFO)
                 log("[*] 开始执行 reroot-local.sh（几分钟，中途重启属正常）", LogTone.INFO)
                 log("", LogTone.NORMAL)
 
+                val env = buildString {
+                    append("PD_PKG='").append(state.managerPackage).append("' ")
+                    if (state.forceUnverified) append("FORCE=1 ")
+                }
                 val process = ShizukuRunner.start(
                     "chmod 755 /data/local/tmp/timer98260 /data/local/tmp/ksud " +
                         "/data/local/tmp/probe /data/local/tmp/fake_shell.sh " +
                         "/data/local/tmp/reroot-local.sh; " +
-                        "sh /data/local/tmp/reroot-local.sh 2>&1",
+                        env + "sh /data/local/tmp/reroot-local.sh 2>&1",
                 )
                 process.inputStream.bufferedReader().forEachLine { line -> log(line) }
                 val rc = process.waitFor()
@@ -264,6 +328,67 @@ class MainActivity : ComponentActivity() {
                 log("[!] ${t.javaClass.simpleName}: ${t.message}", LogTone.ERROR)
             } finally {
                 withContext(Dispatchers.Main) { state.running = false }
+            }
+        }
+    }
+
+    // ---------------- 根管理器 ----------------
+
+    private fun refreshManagers() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            val list = runCatching {
+                ManagerCatalog.scan(this@MainActivity, packageName)
+            }.getOrDefault(emptyList())
+            withContext(Dispatchers.Main) { state.managers = list }
+        }
+    }
+
+    private fun importApk(uri: android.net.Uri) {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                val imported = KsudImporter.stage(this@MainActivity, uri)
+                withContext(Dispatchers.Main) {
+                    state.imported = imported
+                    state.selectedPackage = imported.packageName
+                    state.pickerVisible = false
+                    log("[✓] 已导入 ${imported.label} ${imported.version}", LogTone.OK)
+                    log("    ${imported.packageName} · 运行时用它的 libksud.so", LogTone.NORMAL)
+                }
+            } catch (t: Throwable) {
+                withContext(Dispatchers.Main) {
+                    log("[!] 导入失败：${t.message}", LogTone.ERROR)
+                }
+            }
+        }
+    }
+
+    /** 按选择把 ksud 推到 /data/local/tmp/ksud：导入的 APK > 已装管理器的 libksud.so > 内置 */
+    private fun pushKsud(out: (String) -> Unit) {
+        val imported = state.imported
+        val candidate = state.chosenManager
+        val libPath = candidate?.libPath
+
+        when {
+            imported != null && imported.apk.isFile -> {
+                val (zip, stream) = KsudImporter.openKsud(imported.apk)
+                try {
+                    ShizukuRunner.pushStream(stream, "/data/local/tmp/ksud")
+                } finally {
+                    zip.close()
+                }
+                out("    ✓ ksud ← 导入的 ${imported.label} ${imported.version}")
+            }
+
+            libPath != null -> {
+                java.io.File(libPath).inputStream().use {
+                    ShizukuRunner.pushStream(it, "/data/local/tmp/ksud")
+                }
+                out("    ✓ ksud ← ${candidate?.label} ${candidate?.version} 的 libksud.so")
+            }
+
+            else -> {
+                ShizukuRunner.pushAsset(this, "ksud", "/data/local/tmp/ksud")
+                out("    ✓ ksud ← 内置（KernelSU 32707）")
             }
         }
     }

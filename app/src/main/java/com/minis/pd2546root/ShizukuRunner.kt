@@ -42,11 +42,14 @@ object ShizukuRunner {
 
     /** 把 asset 直接灌进远端进程的 stdin，避开私有目录互相不可读的问题 */
     fun pushAsset(ctx: Context, asset: String, remote: String) {
+        ctx.assets.open(asset).use { pushStream(it, remote) }
+    }
+
+    /** 任意来源（assets / 别的 App 的 nativeLibraryDir / APK 里的 entry）都走这里 */
+    fun pushStream(input: java.io.InputStream, remote: String) {
         val p = start("cat > $remote")
-        p.outputStream.use { out ->
-            ctx.assets.open(asset).use { it.copyTo(out, 64 * 1024) }
-        }
+        p.outputStream.use { out -> input.copyTo(out, 64 * 1024) }
         val rc = p.waitFor()
-        require(rc == 0) { "推送 $asset 失败，rc=$rc" }
+        require(rc == 0) { "写入 $remote 失败，rc=$rc" }
     }
 }
