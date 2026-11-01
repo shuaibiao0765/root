@@ -90,18 +90,28 @@ class RootState {
 
     /** 真正交给 reroot-local.sh 的管理器包名 */
     val managerPackage: String
-        get() = imported?.packageName ?: selectedPackage ?: "me.weishu.kernelsu"
+        get() = imported?.packageName?.takeIf { it.isNotBlank() }
+            ?: selectedPackage
+            ?: "me.weishu.kernelsu"
 
     val managerLabel: String
         get() {
-            imported?.let { return "${it.label} ${it.version}（导入）" }
+            imported?.let {
+                return if (it.raw) "自定义 ksud（裸二进制）" else "${it.label} ${it.version}（导入）"
+            }
             chosenManager?.let { return "${it.label} ${it.version}" }
             return "内置 ksud（KernelSU 32707）"
         }
 
     val managerSummary: String
         get() {
-            imported?.let { return "${it.packageName} · ${it.version} · 来自导入的 APK" }
+            imported?.let {
+                return if (it.raw) {
+                    "裸 ksud 二进制 · 包名用 ${managerPackage}"
+                } else {
+                    "${it.packageName} · ${it.version} · 来自导入的 APK"
+                }
+            }
             chosenManager?.let { c ->
                 return if (c.hasKsud) {
                     "${c.packageName} · ${c.version} · 使用它自带的 libksud.so"
@@ -412,8 +422,15 @@ class MainActivity : ComponentActivity() {
         val libPath = candidate?.libPath
 
         when {
-            imported != null && imported.apk.isFile -> {
-                val (zip, stream) = KsudImporter.openKsud(imported.apk)
+            imported != null && imported.raw && imported.file.isFile -> {
+                imported.file.inputStream().use {
+                    ShizukuRunner.pushStream(it, "/data/local/tmp/ksud")
+                }
+                out("    ✓ ksud ← 导入的裸二进制（${imported.file.length() / 1024} KB）")
+            }
+
+            imported != null && imported.file.isFile -> {
+                val (zip, stream) = KsudImporter.openKsud(imported.file)
                 try {
                     ShizukuRunner.pushStream(stream, "/data/local/tmp/ksud")
                 } finally {

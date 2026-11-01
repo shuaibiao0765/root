@@ -2,12 +2,16 @@ package com.minis.pd2546root
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import android.content.pm.PackageManager
+import android.net.Uri
 import java.io.File
+import java.io.InputStream
+import java.util.zip.ZipFile
 
 /**
  * 找设备上已安装的 KernelSU 家族管理器，并解析它们的 libksud.so。
- * 思路和 ghostlock 的 ManagerScanner 一致：谁带 libksud.so，谁就能当 root 管理器。
+ * 思路和 ghostlock 的 ManagerScanner 一致：谁带 libksud.so，谁就能当 root 管理器；
+ * 但“是不是管理器”和“能不能拿到 ksud”分开判断——很多管理器把 ksud 打包在 APK 里
+ * （extractNativeLibs=false），nativeLibraryDir 下并没有文件。
  */
 object ManagerCatalog {
 
@@ -33,7 +37,7 @@ object ManagerCatalog {
     ) {
         val hasKsud: Boolean get() = libPath != null
 
-        /** 版本号：优先 versionName，没有就用 versionCode，绝不显示“未知”才叫读到了 */
+        /** 版本号：优先 versionName，没有就用 versionCode */
         val version: String
             get() = versionName.takeIf { it.isNotBlank() }?.let { "v$it" }
                 ?: ("v" + versionCode)
@@ -42,7 +46,7 @@ object ManagerCatalog {
     fun looksLikeManager(packageName: String): Boolean =
         packageName in BUILTIN || NAME_HINTS.any { packageName.contains(it, ignoreCase = true) }
 
-    /** 扫描非系统应用；带 libksud.so 的排前面，其次内置家族，最后按名字 */
+    /** 扫描非系统应用；已知 KSU 家族、包名像管理器、或真带 libksud.so 的都算 */
     fun scan(ctx: Context, selfPackage: String): List<Candidate> {
         val pm = ctx.packageManager
         return pm.getInstalledPackages(0)
@@ -62,8 +66,7 @@ object ManagerCatalog {
                     builtin = pi.packageName in BUILTIN,
                 )
             }
-            // 已知 KSU 家族 / 包名像管理器 / 真的带 libksud.so —— 三者任一就算
-            .filter { it.builtin || it.hasKsud || it.packageName in BUILTIN || looksLikeManager(it.packageName) }
+            .filter { it.builtin || it.hasKsud || looksLikeManager(it.packageName) }
             .sortedWith(
                 compareByDescending<Candidate> { it.builtin }
                     .thenByDescending { it.hasKsud }
@@ -73,57 +76,94 @@ object ManagerCatalog {
     }
 }
 
-/** 从用户选的 APK 里取 lib/arm64-v8a/libksud.so，随便哪个 KernelSU 版本都能用 */
+/**
+ * 取 ksud 的两条路：
+ *  1. 管理器 APK —— ksud 以 lib/arm64-v8a/libksud.so 打包（名字叫 .so，其实是 aarch64 ELF 可执行文件）
+ *  2. 裸二进制 —— 官方 release 页直接给 ksud-aarch64-linux-android
+ */
 object KsudImporter {
 
-    const val ENTRY = "lib/arm64-v8a/libksud.so"
+    /** 不同管理器/打包方式的落点，按顺序找 */
+    val ENTRIES = listOf(
+        "lib/arm64-v8a/libksud.so",
+        "lib/arm64/libksud.so",
+        "lib/arm64-v8a/ksud",
+        "assets/ksud",
+        "assets/libksud.so",
+        "assets/bin/ksud",
+    )
 
     data class Imported(
         val packageName: String,
         val label: String,
         val versionName: String,
-        val apk: File,
+        val file: File,
+        val raw: Boolean,
     ) {
-        val version: String get() = versionName.ifBlank { "未知版本" }
+        val version: String
+            get() = when {
+                raw -> "裸 ksud"
+                versionName.isNotBlank() -> "v$versionName"
+                else -> "已导入"
+            }
     }
 
-    /** 把 SAF 给的 Uri 复制进 cacheDir，顺便拿到包名/版本 */
-    fun stage(ctx: Context, uri: android.net.Uri): Imported {
+    fun stage(ctx: Context, uri: Uri): Imported {
         val dir = File(ctx.cacheDir, "ksud").apply { mkdirs() }
-        val apk = File(dir, "imported.apk")
+        // 只留一份，避免旧文件占空间
+        dir.listFiles()?.forEach { runCatching { it.delete() } }
+
+        val tmp = File(dir, "import.bin")
         ctx.contentResolver.openInputStream(uri)?.use { input ->
-            apk.outputStream().use { output -> input.copyTo(output, 256 * 1024) }
+            tmp.outputStream().use { output -> input.copyTo(output, 256 * 1024) }
         } ?: error("读不到所选文件")
 
-        if (!apk.isFile || apk.length() < 1024) error("文件为空或不是 APK")
-        if (!containsKsud(apk)) error("这个 APK 里没有 $ENTRY（不是 KernelSU 家族管理器？）")
+        if (!tmp.isFile || tmp.length() < 4096) error("文件太小，既不是 APK 也不是 ksud")
 
-        val info = ctx.packageManager.getPackageArchiveInfo(apk.absolutePath, 0)
+        // 裸 ELF：直接当 ksud 用
+        if (isElf(tmp)) {
+            return Imported(packageName = "", label = "自定义 ksud", versionName = "", file = tmp, raw = true)
+        }
+
+        val entry = runCatching {
+            ZipFile(tmp).use { zip -> ENTRIES.firstOrNull { zip.getEntry(it) != null } }
+        }.getOrNull() ?: error("APK 里没找到 ksud（找过：${ENTRIES.joinToString("、")}）")
+
+        val info = ctx.packageManager.getPackageArchiveInfo(tmp.absolutePath, 0)
             ?: error("解析 APK 失败")
         val ai = info.applicationInfo
-        ai?.sourceDir = apk.absolutePath
-        ai?.publicSourceDir = apk.absolutePath
+        ai?.sourceDir = tmp.absolutePath
+        ai?.publicSourceDir = tmp.absolutePath
         val label = ai?.let { runCatching { it.loadLabel(ctx.packageManager).toString() }.getOrNull() }
             ?: info.packageName
+
+        val apk = File(dir, "imported.apk")
+        runCatching { tmp.renameTo(apk) }
+
         return Imported(
             packageName = info.packageName,
             label = label,
             versionName = info.versionName.orEmpty(),
-            apk = apk,
+            file = if (apk.isFile) apk else tmp,
+            raw = false,
         )
     }
 
-    private fun containsKsud(apk: File): Boolean =
-        runCatching { java.util.zip.ZipFile(apk).use { it.getEntry(ENTRY) != null } }
-            .getOrDefault(false)
-
-    /** 打开 APK 里的 ksud 流；调用方负责 close ZipFile 之后再用不行，必须边读边写 */
-    fun openKsud(apk: File): Pair<java.util.zip.ZipFile, java.io.InputStream> {
-        val zip = java.util.zip.ZipFile(apk)
-        val entry = zip.getEntry(ENTRY) ?: run {
+    fun openKsud(apk: File): Pair<ZipFile, InputStream> {
+        val zip = ZipFile(apk)
+        val entry = ENTRIES.firstOrNull { zip.getEntry(it) != null } ?: run {
             zip.close()
-            error("APK 里没有 $ENTRY")
+            error("APK 里没找到 ksud")
         }
         return zip to zip.getInputStream(entry)
     }
+
+    private fun isElf(file: File): Boolean = runCatching {
+        file.inputStream().use { input ->
+            val head = ByteArray(4)
+            input.read(head) == 4 &&
+                head[0] == 0x7F.toByte() && head[1] == 'E'.code.toByte() &&
+                head[2] == 'L'.code.toByte() && head[3] == 'F'.code.toByte()
+        }
+    }.getOrDefault(false)
 }

@@ -625,9 +625,13 @@ private fun ManagerSheet(state: RootState, actions: RootActions) {
                     item(key = "imported") {
                         Card {
                             ManagerRow(
-                                title = "${imported.label} ${imported.version}",
-                                subtitle = "${imported.packageName} · 来自导入的 APK",
-                                selected = chosen == imported.packageName,
+                                title = if (imported.raw) "自定义 ksud（裸二进制）" else "${imported.label} ${imported.version}",
+                                subtitle = if (imported.raw) {
+                                    "包名沿用当前选择：${state.managerPackage}"
+                                } else {
+                                    "${imported.packageName} · 来自导入的 APK"
+                                },
+                                selected = imported.packageName.isBlank() || chosen == imported.packageName,
                                 onClick = { actions.onSelectManager(imported.packageName) },
                             )
                         }
@@ -657,7 +661,7 @@ private fun ManagerSheet(state: RootState, actions: RootActions) {
                     Card {
                         ArrowPreference(
                             title = "导入管理器 APK…",
-                            summary = "任意 KernelSU 版本，含 canary / 测试版；取出其中的 libksud.so",
+                            summary = "任意 KernelSU 版本（含 canary），也可以直接选单个 ksud 二进制",
                             onClick = actions.onImportApk,
                         )
                     }
