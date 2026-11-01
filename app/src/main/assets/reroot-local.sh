@@ -382,22 +382,54 @@ say "  KALLSYMS_OK $_kc 个符号"
 [ "$_kc" = "128943" ] || say "  [!] 行数不是 128943，ksud 找符号会失败"
 
 # ---------- 6. late-load ----------
-say "[7/7] ksud late-load（install → late-load → 等 /proc/modules）"
-{
-  echo 'echo ===LOAD==='
-  echo 'id'
-  echo 'cat /sys/module/module/parameters/sig_enforce'
-  echo 'mkdir -p /data/adb'
-  echo "cp $D/kall /data/adb/kall 2>/dev/null"
-  echo 'chmod 644 /data/adb/kall 2>/dev/null'
-  echo "PD_PKG=$PKG PD_KMI=$KMI PD_D=$D /system/bin/sh $D/ksu_stage.sh"
-  echo 'echo LATE_RC=$?'
-  echo 'sleep 2'
-  echo 'grep kernelsu /proc/modules'
-  echo 'id'
-  echo 'getenforce'
-  echo 'echo ===LOAD_END==='
-} | write_run
+say "[7/7] ksud late-load（install → late-load → 取证）"
+# 这一段直接内联进 chan/run，不再依赖外部 ksu_stage.sh 文件
+# （上一版设备上跑的仍是旧脚本，白丢一轮）。
+write_run <<LOADEOF
+echo ===LOAD===
+echo "[ksu] stage v3.3 inline"
+id
+cat /sys/module/module/parameters/sig_enforce
+mkdir -p /data/adb
+cp $D/kall /data/adb/kall 2>/dev/null
+chmod 644 /data/adb/kall 2>/dev/null
+echo "[ksu] kall lines=\$(wc -l < /data/adb/kall 2>/dev/null)"
+echo "[ksu] stage file: \$(ls -l $D/ksu_stage.sh 2>/dev/null)"
+KSUD=$D/ksud
+[ -x "\$KSUD" ] || KSUD=/data/adb/ksu/bin/ksud
+echo "[ksu] ksud=\$KSUD size=\$(wc -c < \$KSUD 2>/dev/null)"
+"\$KSUD" --version 2>&1 | head -1
+"\$KSUD" install > $D/install.log 2>&1
+echo "[ksu] install rc=\$?"
+sed -n '1,20p' $D/install.log 2>/dev/null
+"\$KSUD" late-load --kmi $KMI --allow-shell --package-name $PKG > $D/late.log 2>&1
+echo "[ksu] late-load rc=\$?"
+sed -n '1,40p' $D/late.log 2>/dev/null
+if ! grep -q '^kernelsu ' /proc/modules; then
+  "\$KSUD" late-load --allow-shell --package-name $PKG > $D/late2.log 2>&1
+  echo "[ksu] late-load2 rc=\$?"
+  sed -n '1,40p' $D/late2.log 2>/dev/null
+fi
+/system/bin/usleep 2000000
+if grep -q '^kernelsu ' /proc/modules; then echo KSU_LOADED; else
+  echo KSU_MISSING
+  echo "[ksu] ---- /data/adb/ksu/log ----"
+  ls -l /data/adb/ksu/log 2>&1 | head
+  for f in /data/adb/ksu/log/*; do [ -f "\$f" ] && { echo "--- \$f ---"; tail -n 30 "\$f"; }; done
+  echo "[ksu] ---- /data/adb/ksu 结构 ----"
+  ls -l /data/adb/ksu 2>&1 | head -20
+  echo "[ksu] ---- insmod $D/ksu.ko ----"
+  insmod $D/ksu.ko 2>&1
+  echo "[ksu] insmod rc=\$?"
+  /system/bin/usleep 1000000
+  grep -q '^kernelsu ' /proc/modules && echo KSU_LOADED || echo KSU_STILL_MISSING
+fi
+echo "[ksu] ---- dmesg tail ----"
+dmesg 2>&1 | tail -n 40
+echo "[ksu] enforce=\$(getenforce)"
+id
+echo ===LOAD_END===
+LOADEOF
 _w=0
 while [ $_w -lt 40 ]; do
   sleep 3; _w=$((_w + 1))
