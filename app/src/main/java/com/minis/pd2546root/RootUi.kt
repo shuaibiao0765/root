@@ -3,6 +3,8 @@ package com.minis.pd2546root
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -523,9 +525,11 @@ private fun StepHeader(state: RootState) {
 
 @Composable
 private fun LogPanel(lines: List<LogLine>, modifier: Modifier = Modifier) {
-    val listState = rememberLazyListState()
+    // 故意不用 LazyColumn / SelectionContainer：这套 Compose 组合在浮层里崩过一次，
+    // 现在整段就是一个普通可滚动 Column，行数最多几百行，撑得住。
+    val scroll = rememberScrollState()
     LaunchedEffect(lines.size) {
-        if (lines.isNotEmpty()) listState.scrollToItem(lines.lastIndex)
+        if (lines.isNotEmpty()) scroll.animateScrollTo(scroll.maxValue)
     }
     Column(
         modifier = modifier
@@ -535,26 +539,26 @@ private fun LogPanel(lines: List<LogLine>, modifier: Modifier = Modifier) {
     ) {
         if (lines.isEmpty()) {
             Text(
-                text = "日志会显示在这里。\n冷重启后 root 失效，再点一次即可。",
+                text = "日志区已就绪，等脚本第一行输出…\n（一行都没有 = 脚本根本没启动，或 Shizuku 没给 shell）",
                 color = Color(0xFF9CA3AF),
                 fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace,
             )
         } else {
-            SelectionContainer {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.fillMaxWidth().weight(1f),
-                ) {
-                    items(lines) { line ->
-                        Text(
-                            text = line.text,
-                            color = toneColor(line.tone),
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                            lineHeight = 16.sp,
-                        )
-                    }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(scroll),
+            ) {
+                lines.forEach { line ->
+                    Text(
+                        text = line.text,
+                        color = toneColor(line.tone),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                    )
                 }
             }
         }

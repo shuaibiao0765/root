@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import rikka.shizuku.Shizuku
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -169,6 +170,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        installCrashCatcher()
         state.device = readDevice()
         applyKeepAwake()
 
@@ -205,6 +207,7 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        showLastCrashIfAny()
         refreshManagers()
         Shizuku.addBinderReceivedListenerSticky { refreshShizuku() }
         Shizuku.addBinderDeadListener { refreshShizuku() }
@@ -289,6 +292,10 @@ class MainActivity : ComponentActivity() {
 
     private fun log(line: String, tone: LogTone? = null) {
         val resolved = tone ?: toneOf(line)
+        // 界面这套 Compose 万一又崩，至少这份磁盘日志还在
+        runCatching {
+            File(filesDir, "ui-log.txt").appendText(line + "\n")
+        }
         val step = stepRegex.find(line)
         runOnUiThread {
             if (step != null) {
@@ -320,6 +327,35 @@ class MainActivity : ComponentActivity() {
         log("[*] 日志已复制到剪贴板", LogTone.INFO)
     }
 
+    // ---------------- 崩溃兜底 ----------------
+
+    /** 闪退时把堆栈写进 filesDir，下次打开直接显示在日志区 */
+    private fun installCrashCatcher() {
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            runCatching {
+                File(filesDir, "last-crash.txt").writeText(
+                    "时间 ${SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT).format(Date())}\n" +
+                        "线程 ${t.name}\n" + android.util.Log.getStackTraceString(e),
+                )
+            }
+            prev?.uncaughtException(t, e)
+        }
+    }
+
+    private fun showLastCrashIfAny() {
+        runCatching {
+            val f = File(filesDir, "last-crash.txt")
+            if (!f.exists()) return@runCatching
+            val txt = f.readText()
+            log("[!] 上次运行时闪退了，堆栈如下（已自动记录）", LogTone.ERROR)
+            txt.lineSequence().take(60).forEach { log("    $it", LogTone.ERROR) }
+            log("[*] 把上面这段发出来就能定位；清掉后不会再提示", LogTone.INFO)
+            f.delete()
+            state.sheetVisible = true
+        }
+    }
+
     // ---------------- 一键流程 ----------------
 
     private fun startRoot() {
@@ -342,6 +378,7 @@ class MainActivity : ComponentActivity() {
         state.running = true
         state.sheetVisible = true
         state.logs.clear()
+        runCatching { File(filesDir, "ui-log.txt").writeText("") }
         state.exitCode = null
         state.currentStep = 0
         state.stepFailed = false
