@@ -137,6 +137,9 @@ private fun MainScreen(
             item(key = "status") {
                 StatusCard(state = state, actions = actions)
             }
+            item(key = "log") {
+                InlineLog(state, actions)
+            }
             item(key = "device") {
                 DeviceCard(state.device)
             }
@@ -148,11 +151,6 @@ private fun MainScreen(
                         onClick = actions.onOpenPicker,
                     )
                     InstalledManagerLines(state)
-                    ArrowPreference(
-                        title = "执行日志",
-                        summary = if (state.logs.isEmpty()) "还没有输出" else "最近 ${state.logs.size} 行",
-                        onClick = actions.onOpenSheet,
-                    )
                     ArrowPreference(
                         title = "清理设备端文件",
                         summary = "删除 /data/local/tmp 下的 6 个 payload",
@@ -187,6 +185,34 @@ private fun MainScreen(
         }
         // 关键：浮层要在 Scaffold 的 content 里组合，才会真的被 popupHost 画出来
         sheet()
+    }
+}
+
+// ---------------- 常驻日志（主屏滚动区） ----------------
+
+/**
+ * 执行过程直接挂在主屏上，不再依赖 OverlayBottomSheet。
+ * 之前的浮层一打开就闪退过，而且盖住界面什么都看不见；
+ * 这里是固定高度的一块滚动区，跟着日志自动滚到底。
+ */
+@Composable
+private fun InlineLog(state: RootState, actions: RootActions) {
+    Card(insideMargin = PaddingValues(14.dp)) {
+        Column(Modifier.fillMaxWidth()) {
+            StepHeader(state)
+            LogPanel(
+                lines = state.logs,
+                modifier = Modifier.fillMaxWidth().height(340.dp),
+            )
+            if (state.logs.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                TextButton(
+                    text = "复制这 ${state.logs.size} 行日志",
+                    onClick = actions.onCopyLogs,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 
@@ -267,8 +293,7 @@ private fun StatusCard(state: RootState, actions: RootActions) {
                 state.shizuku == ShizukuState.NOT_RUNNING || state.shizuku == ShizukuState.PERMISSION_REQUIRED ->
                     actions.onRequestPermission()
 
-                state.shizuku == ShizukuState.READY && state.device.kernel.isBlank() -> Unit
-                else -> actions.onOpenSheet()
+                else -> Unit
             }
         },
         showIndication = true,

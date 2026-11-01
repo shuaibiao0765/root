@@ -277,19 +277,30 @@ say "  aggr=$AGGR"
 
 hadd "$AGGR" 16; _head="$HOUT"
 kread "$_head"; NODE=${KV0:-}
-TARGET=''; _i=0
+# 判据（手册 §7.2 实测三条规则）：
+#   1. 桶头自身也要看，不能只遍历 list.next；
+#   2. pre_handler 落在镜像窗口里也可能是目标 —— 别再按 base..base+0x3000000 过滤，
+#      旧逻辑就是死在这里，日志表现为 PRE_HANDLER NOT FOUND；
+#   3. 优先清 slab 地址（< 0xffffffc000000000）的节点，链条遍历上限 8 跳。
+TARGET=''; TARGET_SLAB=0; _i=0
 while [ $_i -lt 8 ] && [ -n "$NODE" ] && [ "$NODE" != "$_head" ]; do
   hadd "$NODE" 24; _an="$HOUT"
   hadd "$NODE" 48; _ap="$HOUT"
   kread "$NODE" "$_an" "$_ap"
   NN=${KV0:-}; _addr=${KV1:-}; _pre=${KV2:-}
   say "  node=$NODE addr=$_addr pre=$_pre"
-  if [ "$_addr" = "$LM" ] && [ -n "$_pre" ]; then
-    if hlt "$_pre" "$BASE" || ! hlt "$_pre" "$LIMIT"; then
-      TARGET=$_ap
-    fi
-  fi
-  [ -n "$TARGET" ] && break
+  case "$_pre" in
+    ''|0|ffffffffffffffff) ;;
+    *)
+      if [ "$_addr" = "$LM" ]; then
+        if hlt "$NODE" ffffffc000000000; then
+          TARGET=$_ap; TARGET_SLAB=1
+        else
+          [ -n "$TARGET" ] || TARGET=$_ap
+        fi
+      fi ;;
+  esac
+  [ "$TARGET_SLAB" = "1" ] && break
   NODE=$NN
   _i=$((_i + 1))
 done

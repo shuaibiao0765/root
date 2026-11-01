@@ -180,7 +180,7 @@ class MainActivity : ComponentActivity() {
                 actions = RootActions(
                     onRun = ::startRoot,
                     onRequestPermission = ::askPermission,
-                    onOpenSheet = { state.sheetVisible = true },
+                    onOpenSheet = { state.sheetVisible = false },
                     onDismissSheet = { if (!state.running) state.sheetVisible = false },
                     onCopyLogs = ::copyLogs,
                     onCleanup = ::cleanup,
@@ -352,7 +352,7 @@ class MainActivity : ComponentActivity() {
             txt.lineSequence().take(60).forEach { log("    $it", LogTone.ERROR) }
             log("[*] 把上面这段发出来就能定位；清掉后不会再提示", LogTone.INFO)
             f.delete()
-            state.sheetVisible = true
+            state.sheetVisible = false
         }
     }
 
@@ -362,7 +362,7 @@ class MainActivity : ComponentActivity() {
         if (state.running) return
         if (state.shizuku == ShizukuState.NOT_RUNNING) {
             log("[!] Shizuku 没连上：先把 Shizuku 启动起来", LogTone.ERROR)
-            state.sheetVisible = true
+            state.sheetVisible = false
             return
         }
         if (state.shizuku == ShizukuState.PERMISSION_REQUIRED) {
@@ -371,12 +371,12 @@ class MainActivity : ComponentActivity() {
         }
         if (!state.kernelOk) {
             log("[!] 内核未验证：勾选“强制运行”后再试", LogTone.WARN)
-            state.sheetVisible = true
+            state.sheetVisible = false
             return
         }
 
         state.running = true
-        state.sheetVisible = true
+        state.sheetVisible = false
         state.logs.clear()
         runCatching { File(filesDir, "ui-log.txt").writeText("") }
         state.exitCode = null
@@ -455,10 +455,10 @@ class MainActivity : ComponentActivity() {
     private fun pullDeviceLog() {
         if (state.shizuku != ShizukuState.READY) {
             log("[!] 需要先授权 Shizuku 才能读取设备端状态", LogTone.WARN)
-            state.sheetVisible = true
+            state.sheetVisible = false
             return
         }
-        state.sheetVisible = true
+        state.sheetVisible = false
         lifecycleScope.launch(Dispatchers.IO) {
             log("[*] 读取设备端状态…", LogTone.INFO)
             val cmd = "echo '--- uname -r ---'; uname -r; " +
@@ -508,7 +508,7 @@ class MainActivity : ComponentActivity() {
         } else {
             log("[*] 设备信息已从系统读取（Shizuku 未授权，跳过 uname 校验）", LogTone.INFO)
         }
-        state.sheetVisible = true
+        state.sheetVisible = false
     }
 
     private fun importApk(uri: android.net.Uri) {
@@ -531,6 +531,39 @@ class MainActivity : ComponentActivity() {
     }
 
     /** 按选择把 ksud 推到 /data/local/tmp/ksud：导入的 APK > 已装管理器的 libksud.so > 内置 */
+    /**
+     * ksud 必须做 4 处等长替换，否则它去读 /proc/kallsyms（kptr_restrict 下全是 0），
+     * late-load 必然失败 —— 管理器那边就表现为「加载不上 / 只有宽容模式」。
+     *   /proc/kallsyms                 -> /data/adb/kall                  ×3
+     *   /proc/sys/kernel/kptr_restrict -> /data/local/tmp/chan/kptr_0000  ×1
+     */
+    private fun patchKsud(src: ByteArray): Pair<ByteArray, Int> {
+        val out = src.copyOf()
+        var total = 0
+        fun replaceAll(from: String, to: String): Int {
+            val f = from.toByteArray(Charsets.UTF_8)
+            val t = to.toByteArray(Charsets.UTF_8)
+            if (f.size != t.size) return 0
+            var n = 0
+            var i = 0
+            while (i <= out.size - f.size) {
+                var hit = true
+                for (j in f.indices) if (out[i + j] != f[j]) { hit = false; break }
+                if (hit) {
+                    System.arraycopy(t, 0, out, i, t.size)
+                    n++
+                    i += t.size
+                } else {
+                    i++
+                }
+            }
+            return n
+        }
+        total += replaceAll("/proc/kallsyms", "/data/adb/kall")
+        total += replaceAll("/proc/sys/kernel/kptr_restrict", "/data/local/tmp/chan/kptr_0000")
+        return out to total
+    }
+
     private fun pushKsud(out: (String) -> Unit) {
         val imported = state.imported
         val candidate = state.chosenManager
@@ -538,32 +571,34 @@ class MainActivity : ComponentActivity() {
 
         when {
             imported != null && imported.raw && imported.file.isFile -> {
-                imported.file.inputStream().use {
+                val (patched, hits) = patchKsud(imported.file.readBytes())
+                java.io.ByteArrayInputStream(patched).use {
                     ShizukuRunner.pushStream(it, "/data/local/tmp/ksud")
                 }
-                out("    ✓ ksud ← 导入的裸二进制（${imported.file.length() / 1024} KB）")
+                out("    ✓ ksud ← 导入的裸二进制（补丁 $hits 处，${patched.size / 1024} KB）")
             }
 
             imported != null && imported.file.isFile -> {
                 val (zip, stream) = KsudImporter.openKsud(imported.file)
-                try {
-                    ShizukuRunner.pushStream(stream, "/data/local/tmp/ksud")
-                } finally {
-                    zip.close()
+                val bytes = try { stream.readBytes() } finally { zip.close() }
+                val (patched, hits) = patchKsud(bytes)
+                java.io.ByteArrayInputStream(patched).use {
+                    ShizukuRunner.pushStream(it, "/data/local/tmp/ksud")
                 }
-                out("    ✓ ksud ← 导入的 ${imported.label} ${imported.version}")
+                out("    ✓ ksud ← 导入的 ${imported.label} ${imported.version}（补丁 $hits 处）")
             }
 
             libPath != null -> {
-                java.io.File(libPath).inputStream().use {
+                val (patched, hits) = patchKsud(java.io.File(libPath).readBytes())
+                java.io.ByteArrayInputStream(patched).use {
                     ShizukuRunner.pushStream(it, "/data/local/tmp/ksud")
                 }
-                out("    ✓ ksud ← ${candidate?.label} ${candidate?.version} 的 libksud.so")
+                out("    ✓ ksud ← ${candidate?.label} ${candidate?.version} 的 libksud.so（补丁 $hits 处）")
             }
 
             else -> {
                 ShizukuRunner.pushAsset(this, "ksud", "/data/local/tmp/ksud")
-                out("    ✓ ksud ← 内置（KernelSU 32707）")
+                out("    ✓ ksud ← 内置（KernelSU 32707，已是补丁版）")
             }
         }
     }
@@ -571,7 +606,7 @@ class MainActivity : ComponentActivity() {
     private fun cleanup() {
         if (state.shizuku != ShizukuState.READY) {
             log("[!] 需要 Shizuku 授权才能清理", LogTone.ERROR)
-            state.sheetVisible = true
+            state.sheetVisible = false
             return
         }
         lifecycleScope.launch(Dispatchers.IO) {
@@ -584,7 +619,7 @@ class MainActivity : ComponentActivity() {
                 } else {
                     log("[!] 清理失败：${out.trim()}", LogTone.ERROR)
                 }
-                state.sheetVisible = true
+                state.sheetVisible = false
             }
         }
     }
