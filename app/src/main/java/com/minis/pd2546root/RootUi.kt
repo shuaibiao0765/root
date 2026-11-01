@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
@@ -74,6 +75,13 @@ private enum class RootScreen { Main, Advanced }
 fun RootApp(state: RootState, actions: RootActions) {
     MiuixTheme(colors = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
         var screen by remember { mutableStateOf(RootScreen.Main) }
+        // 执行中的秒表，给进度条旁边的“已用”用
+        LaunchedEffect(state.running) {
+            while (state.running) {
+                state.elapsedSec = ((System.currentTimeMillis() - state.runStartedAt) / 1000).toInt()
+                kotlinx.coroutines.delay(1000)
+            }
+        }
         Box(Modifier.fillMaxSize()) {
             when (screen) {
                 RootScreen.Main -> MainScreen(
@@ -191,8 +199,10 @@ private fun statusSpec(state: RootState): StatusSpec {
 
     return when {
         state.running -> StatusSpec(
-            greenBg, "执行中…",
-            "正在跑 reroot-local.sh，日志会实时刷在下方浮层",
+            greenBg,
+            if (state.stepFailed) "执行中断" else "执行中…",
+            "第 ${state.currentStep.coerceAtLeast(0) + 1}/${STEP_TITLES.size} 步 · " +
+                STEP_TITLES.getOrElse(state.currentStep.coerceAtLeast(0)) { STEP_TITLES.first() },
             Icons.Rounded.CheckCircleOutline, green,
         )
 
@@ -375,15 +385,104 @@ private fun LogSheet(state: RootState, actions: RootActions) {
             }
         },
         content = {
-            LogPanel(
-                lines = state.logs,
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 240.dp, max = 520.dp)
+                    .heightIn(min = 280.dp, max = 560.dp)
                     .navigationBarsPadding(),
-            )
+            ) {
+                StepHeader(state)
+                LogPanel(
+                    lines = state.logs,
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+            }
         },
     )
+}
+
+@Composable
+private fun StepHeader(state: RootState) {
+    val total = STEP_TITLES.size
+    val current = state.currentStep
+    val accent = MiuixTheme.colorScheme.primary
+
+    val fraction = when {
+        current < 0 -> 0f
+        state.running && !state.stepFailed -> (current + 0.5f) / total
+        state.stepFailed -> (current + 1f) / total
+        else -> (current + 1f) / total
+    }.coerceIn(0f, 1f)
+
+    val title = when {
+        current < 0 -> if (state.logs.isEmpty()) "等待开始" else "准备中"
+        state.stepFailed -> "第 ${current + 1}/$total 步失败 · ${STEP_TITLES[current]}"
+        state.running -> "第 ${current + 1}/$total 步 · ${STEP_TITLES[current]}"
+        state.exitCode == 0 -> "全部 $total 步完成 · root 已就绪"
+        else -> "已结束 · 第 ${current + 1}/$total 步"
+    }
+    val titleColor = when {
+        state.stepFailed -> Color(0xFFF72727)
+        state.exitCode == 0 && !state.running -> Color(0xFF36D167)
+        else -> MiuixTheme.colorScheme.onSurface
+    }
+    val elapsed = "%02d:%02d".format(state.elapsedSec / 60, state.elapsedSec % 60)
+
+    Column(Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, bottom = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Medium,
+                color = titleColor,
+            )
+            Spacer(Modifier.weight(1f))
+            if (state.running || state.elapsedSec > 0) {
+                Text(
+                    text = elapsed,
+                    fontSize = 12.sp,
+                    color = MiuixTheme.colorScheme.onSurface.copy(alpha = 0.55f),
+                )
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(MiuixTheme.colorScheme.onSurface.copy(alpha = 0.1f)),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxWidth(fraction)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(if (state.stepFailed) Color(0xFFF72727) else accent),
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            STEP_TITLES.indices.forEach { i ->
+                val color = when {
+                    state.stepFailed && i == current -> Color(0xFFF72727)
+                    i < current || (state.exitCode == 0 && !state.running) -> Color(0xFF36D167)
+                    i == current -> accent
+                    else -> MiuixTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+                }
+                Box(
+                    Modifier
+                        .size(if (i == current && !state.stepFailed) 9.dp else 6.dp)
+                        .clip(CircleShape)
+                        .background(color),
+                )
+            }
+        }
+    }
 }
 
 @Composable

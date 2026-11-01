@@ -31,6 +31,17 @@ data class LogLine(val text: String, val tone: LogTone = LogTone.NORMAL)
 /** 内置脚本只针对这一版内核，其他 build 需要自己重算符号表。 */
 const val TARGET_KERNEL = "6.12.58-android16-6-gdd6fd5c98918"
 
+/** reroot-local.sh 的 [n/6] 阶段，顺序即进度 */
+val STEP_TITLES = listOf(
+    "环境检查",
+    "启动 exploit",
+    "清 vr funcs",
+    "扫 kprobe 桶",
+    "截断 notifier 链",
+    "生成 kallsyms",
+    "ksud late-load",
+)
+
 data class DeviceInfo(
     val model: String = "—",
     val soc: String = "—",
@@ -51,6 +62,10 @@ class RootState {
     var forceUnverified by mutableStateOf(false)
     var keepAwake by mutableStateOf(true)
     var exitCode by mutableStateOf<Int?>(null)
+    var currentStep by mutableStateOf(-1)
+    var stepFailed by mutableStateOf(false)
+    var runStartedAt by mutableStateOf(0L)
+    var elapsedSec by mutableStateOf(0)
     var lastRunAt by mutableStateOf("—")
     val logs = mutableStateListOf<LogLine>()
 
@@ -243,9 +258,21 @@ class MainActivity : ComponentActivity() {
 
     // ---------------- 日志 ----------------
 
+    private val stepRegex = Regex("""\[(\d)\s*/\s*(\d)\]\s*(.+)""")
+
     private fun log(line: String, tone: LogTone? = null) {
         val resolved = tone ?: toneOf(line)
-        runOnUiThread { state.logs.add(LogLine(line, resolved)) }
+        val step = stepRegex.find(line)
+        runOnUiThread {
+            if (step != null) {
+                val index = step.groupValues[1].toIntOrNull()
+                if (index != null && index in STEP_TITLES.indices) {
+                    state.currentStep = index
+                    state.stepFailed = false
+                }
+            }
+            state.logs.add(LogLine(line, resolved))
+        }
     }
 
     private fun toneOf(line: String): LogTone = when {
@@ -288,6 +315,10 @@ class MainActivity : ComponentActivity() {
         state.sheetVisible = true
         state.logs.clear()
         state.exitCode = null
+        state.currentStep = 0
+        state.stepFailed = false
+        state.runStartedAt = System.currentTimeMillis()
+        state.elapsedSec = 0
         state.lastRunAt = SimpleDateFormat("MM-dd HH:mm:ss", Locale.ROOT).format(Date())
 
         lifecycleScope.launch(Dispatchers.IO) {
@@ -320,8 +351,13 @@ class MainActivity : ComponentActivity() {
                 log("", LogTone.NORMAL)
                 log("[*] 脚本退出码 $rc", LogTone.INFO)
                 if (rc == 0) {
+                    runOnUiThread {
+                        state.currentStep = STEP_TITLES.lastIndex
+                        state.stepFailed = false
+                    }
                     log("[✓] KSU_ROOT_OK root 已就绪（u:r:ksu:s0）", LogTone.OK)
                 } else {
+                    runOnUiThread { state.stepFailed = true }
                     log("[!] 未成功，看上面最后几行；重启后再点一次通常就行", LogTone.ERROR)
                 }
             } catch (t: Throwable) {
