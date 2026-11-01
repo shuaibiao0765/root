@@ -369,10 +369,14 @@ class MainActivity : ComponentActivity() {
                 val process = ShizukuRunner.start(
                     "chmod 755 /data/local/tmp/timer98260 /data/local/tmp/ksud " +
                         "/data/local/tmp/probe /data/local/tmp/fake_shell.sh " +
-                        "/data/local/tmp/reroot-local.sh; " +
+                        "/data/local/tmp/ksu_stage.sh /data/local/tmp/reroot-local.sh; " +
                         env + "sh /data/local/tmp/reroot-local.sh 2>&1",
                 )
-                process.inputStream.bufferedReader().forEachLine { line -> log(line) }
+                var gotLine = false
+                process.inputStream.bufferedReader().forEachLine { line ->
+                    gotLine = true
+                    log(line)
+                }
                 val rc = process.waitFor()
 
                 state.exitCode = rc
@@ -387,6 +391,9 @@ class MainActivity : ComponentActivity() {
                 } else {
                     runOnUiThread { state.stepFailed = true }
                     log("[!] 未成功，看上面最后几行；重启后再点一次通常就行", LogTone.ERROR)
+                    // 兜底：不管 UI 那边有没有显示出来，都把设备端两份日志贴进来
+                    if (!gotLine) log("[!] 一条输出都没收到，直接抓设备端日志：", LogTone.WARN)
+                    dumpDeviceLogs()
                 }
             } catch (t: Throwable) {
                 log("[!] ${t.javaClass.simpleName}: ${t.message}", LogTone.ERROR)
@@ -420,7 +427,8 @@ class MainActivity : ComponentActivity() {
             val cmd = "echo '--- uname -r ---'; uname -r; " +
                 "echo '--- getenforce ---'; getenforce 2>&1; " +
                 "echo '--- timer98260 进程 ---'; ps -A 2>/dev/null | grep '[t]imer98260' || echo '(无)'; " +
-                "echo '--- fakeR.log 最后 40 行 ---'; tail -n 40 /data/local/tmp/fakeR.log 2>&1"
+                "echo '--- fakeR.log 最后 40 行 ---'; tail -n 40 /data/local/tmp/fakeR.log 2>&1; " +
+                "echo '--- run.log 最后 40 行 ---'; tail -n 40 /data/local/tmp/run.log 2>&1"
             try {
                 val out = ShizukuRunner.run(cmd)
                 if (out.isBlank()) {
@@ -432,6 +440,25 @@ class MainActivity : ComponentActivity() {
                 log("[!] 读取失败：${t.javaClass.simpleName}: ${t.message}", LogTone.ERROR)
             }
             log("[*] 读取完毕", LogTone.INFO)
+        }
+    }
+
+    /**
+     * 失败兜底：直接把设备端 run.log / fakeR.log 的尾巴拉进日志区。
+     * 目的是「不管脚本那边的输出有没有传过来，界面上必须有东西可看」。
+     */
+    private fun dumpDeviceLogs() {
+        runCatching {
+            val out = ShizukuRunner.run(
+                "echo '--- run.log 最后 30 行 ---'; tail -n 30 /data/local/tmp/run.log 2>&1; " +
+                    "echo '--- fakeR.log 最后 25 行 ---'; tail -n 25 /data/local/tmp/fakeR.log 2>&1; " +
+                    "echo '--- 进程 / 内核 ---'; " +
+                    "ps -A 2>/dev/null | grep '[t]imer98260' || echo '(timer98260 未运行)'; " +
+                    "uname -r; getenforce 2>&1",
+            )
+            out.lineSequence().forEach { l -> log("    $l") }
+        }.onFailure { t ->
+            log("[!] 抓设备端日志失败：${t.javaClass.simpleName}: ${t.message}", LogTone.WARN)
         }
     }
 
