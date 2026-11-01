@@ -480,7 +480,7 @@ class MainActivity : ComponentActivity() {
                 "echo '--- modules_disabled / lockdown ---'; cat /proc/sys/kernel/modules_disabled 2>&1; cat /sys/kernel/security/lockdown 2>&1; " +
                 "echo '--- timer98260 进程 ---'; ps -A 2>/dev/null | grep '[t]imer98260' || echo '(无)'; " +
                 "echo '--- pstore(内核崩溃日志) ---'; ls -l /sys/fs/pstore 2>&1; " +
-                "for f in /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-0 /sys/fs/pstore/console-ramoops; do [ -r \"$f\" ] && { echo \"--- $f ---\"; tail -n 50 \"$f\" 2>&1; }; done; " +
+                "for f in /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-0 /sys/fs/pstore/console-ramoops; do [ -r \"\$f\" ] && { echo \"--- \$f ---\"; tail -n 50 \"\$f\" 2>&1; }; done; " +
                 "echo '--- fakeR.log 最后 40 行 ---'; tail -n 40 /data/local/tmp/fakeR.log 2>&1; " +
                 "echo '--- run.log 最后 40 行 ---'; tail -n 40 /data/local/tmp/run.log 2>&1"
             try {
@@ -506,7 +506,7 @@ class MainActivity : ComponentActivity() {
             val out = ShizukuRunner.run(
                 "echo '--- 上次跑到第几步 ---'; cat /data/local/tmp/.pd_step 2>&1; " +
                     "echo '--- pstore(内核崩溃日志) ---'; ls -l /sys/fs/pstore 2>&1; " +
-                    "for f in /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-0; do [ -r \"$f\" ] && { echo \"--- $f ---\"; tail -n 40 \"$f\" 2>&1; }; done; " +
+                    "for f in /sys/fs/pstore/console-ramoops-0 /sys/fs/pstore/dmesg-ramoops-0; do [ -r \"\$f\" ] && { echo \"--- \$f ---\"; tail -n 40 \"\$f\" 2>&1; }; done; " +
                     "echo '--- run.log 最后 30 行 ---'; tail -n 30 /data/local/tmp/run.log 2>&1; " +
                     "echo '--- fakeR.log 最后 25 行 ---'; tail -n 25 /data/local/tmp/fakeR.log 2>&1; " +
                     "echo '--- 进程 / 内核 ---'; " +
