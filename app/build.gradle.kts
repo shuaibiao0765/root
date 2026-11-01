@@ -11,8 +11,8 @@ android {
         applicationId = "com.minis.pd2546root"
         minSdk = 31
         targetSdk = 37
-        versionCode = 20
-        versionName = "3.9"
+        versionCode = 21
+        versionName = "3.10"
     }
     buildTypes {
         release {

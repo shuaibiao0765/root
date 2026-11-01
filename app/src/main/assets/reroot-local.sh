@@ -354,33 +354,25 @@ else
 fi
 
 # ---------- 4. notifier 链 ----------
-say "[5/7] 截断 module notifier 链"
+say "[5/7] 截断 module notifier 链（整链清空）"
+# 之前只砍 trace_module_notify 之后，但 vivo 的 hks-dfd 挂在链更靠前的位置，
+# init_module 返回 EPERM 正是它返回 NOTIFY_BAD 的结果。这里把链头指针直接清 0，
+# 让整条 blocking notifier 链失效。
 hadd "$MODULE_NOTIFY_LIST" "$SLIDE"; NH="$HOUT"
-hadd "$NH" 40; kread "$HOUT"; NODE=${KV0:-}
-say "  notifier head $NODE"
+hadd "$NH" 40; _headp="$HOUT"
+kread "$_headp"; say "  notifier head = ${KV0:-0}"
 hadd "$TRACE_MODULE_NOTIFY" "$SLIDE"; WANT="$HOUT"
-NT=''; _i=0
+NODE=${KV0:-}; _i=0
 while [ $_i -lt 16 ] && [ -n "$NODE" ]; do
   hadd "$NODE" 08; _nn_a="$HOUT"
   hadd "$NODE" 10; _pr_a="$HOUT"
   kread "$NODE" "$_nn_a" "$_pr_a"
-  CALL=${KV0:-}; NN=${KV1:-}
-  say "  nb $NODE call=$CALL next=$NN"
-  [ "$CALL" = "$WANT" ] && { NT=$_nn_a; break; }
-  NODE=$NN
-  _i=$((_i + 1))
+  say "  nb $NODE call=${KV0:-} next=${KV1:-}"
+  NODE=${KV1:-}; _i=$((_i + 1))
 done
-if [ -z "$NT" ]; then
-  if [ "${TOLERANT:-0}" = "1" ]; then
-    say "  [!] TRACE_MODULE_NOTIFY NODE NOT FOUND，TOLERANT=1 跳过"
-  else
-    die "TRACE_MODULE_NOTIFY NODE NOT FOUND（可试 TOLERANT=1）"
-  fi
-else
-  plant "$NT" 0 || die "NOTIFIER PLANT FAILED"
-  kread "$NT"; zero_check "notifier"
-  say "  notifier next after = ${KV0:-none}"
-fi
+plant "$_headp" 0 || die "清 notifier 链头失败"
+kread "$_headp"; zero_check "notifier head"
+say "  notifier head after = ${KV0:-0}"
 say "  ALL PLANTS OK"
 
 # ---------- 4.5 模块加载开关 ----------
