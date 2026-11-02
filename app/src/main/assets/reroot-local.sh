@@ -421,8 +421,16 @@ if [ ! -s "\$KO" ]; then
 fi
 ls -l "\$KO" 2>&1
 echo "[ksu] KO=\${KO:-none} size=\$(wc -c < "\$KO" 2>/dev/null)"
-echo "[ksu] drv.ko 头4字节: \$(head -c 4 "\$KO" 2>/dev/null | od -An -tx1 2>/dev/null)"
-echo "[ksu] drv.ko vermagic: \$(strings "\$KO" 2>/dev/null | grep -m1 vermagic)"
+HDR=\$(head -c 4 "\$KO" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')
+VM=\$(strings "\$KO" 2>/dev/null | grep -m1 vermagic)
+echo "[ksu] drv.ko 头4字节: \$HDR"
+echo "[ksu] drv.ko vermagic: \$VM"
+# 铁闸：不是 ELF 或 vermagic 不是 6.12.58，就绝不 insmod（上次就是这么 panic 的）
+if [ "\$HDR" != "7f454c46" ] || [ -z "\$VM" ] || [ "\${VM#*6.12.58}" = "\$VM" ]; then
+  echo "[ksu] [!] drv.ko 不合格（头=\$HDR vm=\$VM），跳过 insmod，避免 panic"
+  echo "[ksu] 前 64 字节: \$(head -c 64 "\$KO" 2>/dev/null | od -An -tx1 2>/dev/null | tr -d '\n')"
+  KO=""
+fi
 
 # 按参考工具（Root 酱）的顺序打：先 late-load 不带 --package-name，再 ksud insmod / 内核 insmod
 # 带 manager_package= 参数（KernelSU bootstrap 内存装载，绕开被拦的 init_module）。
