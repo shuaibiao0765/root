@@ -16,8 +16,6 @@ object ShizukuRunner {
         "ksud",
         "probe",
         "fake_shell.sh",
-        "ksu_stage.sh",
-        "ksu.ko",
         "symbols.txt",
     )
 

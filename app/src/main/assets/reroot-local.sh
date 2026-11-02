@@ -189,15 +189,15 @@ case "$KV" in
     ;;
 esac
 
-for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh ksu.ko symbols.txt; do
+for f in timer98260 ksud probe fake_shell.sh symbols.txt; do
   if [ ! -f "$D/$f" ]; then
     [ -f "$SRC/$f" ] || die "缺少 $SRC/$f（先把解压出来的 linux/files 放到 /sdcard/Download/pd2546/）"
     cp -f "$SRC/$f" "$D/$f" || die "拷贝 $f 失败"
   fi
 done
-chmod 755 "$D/timer98260" "$D/ksud" "$D/probe" "$D/fake_shell.sh" "$D/ksu_stage.sh"
+chmod 755 "$D/timer98260" "$D/ksud" "$D/probe" "$D/fake_shell.sh"
 say "  设备上实际的文件："
-for f in timer98260 ksud probe fake_shell.sh ksu_stage.sh ksu.ko symbols.txt; do
+for f in timer98260 ksud probe fake_shell.sh symbols.txt; do
   say "    $f  $(wc -c < "$D/$f" 2>/dev/null | tr -d ' ') 字节"
 done
 mkdir -p "$CH"; chmod 777 "$CH"
@@ -405,7 +405,6 @@ mkdir -p /data/adb
 cp $D/kall /data/adb/kall 2>/dev/null
 chmod 644 /data/adb/kall 2>/dev/null
 echo "[ksu] kall lines=\$(wc -l < /data/adb/kall 2>/dev/null)"
-echo "[ksu] stage file: \$(ls -l $D/ksu_stage.sh 2>/dev/null)"
 KSUD=$D/ksud
 [ -x "\$KSUD" ] || KSUD=/data/adb/ksu/bin/ksud
 echo "[ksu] ksud=\$KSUD size=\$(wc -c < \$KSUD 2>/dev/null)"
@@ -422,22 +421,9 @@ echo "[ksu] late-load(无package-name) rc=\$?"
 sed -n '1,30p' $D/late.log 2>/dev/null
 grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
 
-if [ "$KSU_LOADED" != "1" ] && [ -f $D/ksu.ko ]; then
-  cp -f $D/ksu.ko $D/drv.ko 2>/dev/null
-  echo "[ksu] ---- ksud insmod $D/drv.ko manager_package=$PKG ----"
-  "\$KSUD" insmod $D/drv.ko manager_package=$PKG 2>&1
-  echo "[ksu] ksud-insmod rc=\$?"
-  /system/bin/usleep 500000
-  grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
-fi
-
-if [ "$KSU_LOADED" != "1" ] && [ -f $D/drv.ko ]; then
-  echo "[ksu] ---- /system/bin/insmod $D/drv.ko manager_package=$PKG ----"
-  /system/bin/insmod $D/drv.ko manager_package=$PKG 2>&1
-  echo "[ksu] insmod rc=\$?"
-  /system/bin/usleep 500000
-  grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
-fi
+# 说明：不再用工具包里的 ksu.ko 做 insmod —— 那份 LKM 的 vermagic 是 6.12.76，
+# 跟本机 6.12.58 不匹配，强行装载会让内核 panic 重启。late-load 用的是 ksud
+# 自己内嵌的、KMI 匹配的那份，安全。
 
 if [ "$KSU_LOADED" != "1" ]; then
   "\$KSUD" late-load --allow-shell --kmi $KMI --package-name $PKG > $D/late2.log 2>&1
