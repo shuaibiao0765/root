@@ -413,19 +413,42 @@ echo "[ksu] ksud=\$KSUD size=\$(wc -c < \$KSUD 2>/dev/null)"
 echo "[ksu] install rc=\$?"
 sed -n '1,20p' $D/install.log 2>/dev/null
 
+# ksud install 会把与内核匹配（vermagic 6.12.58）的 LKM 解到 /data/adb/ksu/lib/。
+# 直接拿它 insmod，vermagic 对得上，不会像工具包那个 6.12.76 一样 panic。
+echo "[ksu] ---- /data/adb/ksu/lib ----"
+ls -l /data/adb/ksu/lib 2>&1
+KO=\$(ls /data/adb/ksu/lib/*.ko 2>/dev/null | head -1)
+echo "[ksu] KO=\${KO:-none}"
+
 # 按参考工具（Root 酱）的顺序打：先 late-load 不带 --package-name，再 ksud insmod / 内核 insmod
 # 带 manager_package= 参数（KernelSU bootstrap 内存装载，绕开被拦的 init_module）。
 KSU_LOADED=0
+if [ -n "\$KO" ] && [ -f "\$KO" ]; then
+  echo "[ksu] ---- /system/bin/insmod \$KO manager_package=$PKG ----"
+  /system/bin/insmod "\$KO" manager_package=$PKG 2>&1
+  echo "[ksu] insmod(lib/正确LKM) rc=\$?"
+  /system/bin/usleep 800000
+  grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
+fi
+if [ "\$KSU_LOADED" != "1" ] && [ -n "\$KO" ] && [ -f "\$KO" ]; then
+  echo "[ksu] ---- ksud insmod \$KO manager_package=$PKG ----"
+  "\$KSUD" insmod "\$KO" manager_package=$PKG 2>&1
+  echo "[ksu] ksud-insmod(lib) rc=\$?"
+  /system/bin/usleep 800000
+  grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
+fi
+if [ "\$KSU_LOADED" != "1" ]; then
 "\$KSUD" late-load --allow-shell --kmi $KMI > $D/late.log 2>&1
 echo "[ksu] late-load(无package-name) rc=\$?"
 sed -n '1,30p' $D/late.log 2>/dev/null
 grep -q '^kernelsu ' /proc/modules && KSU_LOADED=1
+fi
 
 # 说明：不再用工具包里的 ksu.ko 做 insmod —— 那份 LKM 的 vermagic 是 6.12.76，
 # 跟本机 6.12.58 不匹配，强行装载会让内核 panic 重启。late-load 用的是 ksud
 # 自己内嵌的、KMI 匹配的那份，安全。
 
-if [ "$KSU_LOADED" != "1" ]; then
+if [ "\$KSU_LOADED" != "1" ]; then
   "\$KSUD" late-load --allow-shell --kmi $KMI --package-name $PKG > $D/late2.log 2>&1
   echo "[ksu] late-load(带package-name) rc=\$?"
   sed -n '1,30p' $D/late2.log 2>/dev/null
@@ -433,7 +456,7 @@ if [ "$KSU_LOADED" != "1" ]; then
 fi
 
 /system/bin/usleep 1000000
-if [ "$KSU_LOADED" = "1" ]; then echo KSU_LOADED; else
+if [ "\$KSU_LOADED" = "1" ]; then echo KSU_LOADED; else
   echo KSU_MISSING
   echo "[ksu] ---- /data/adb/ksu/log ----"
   ls -l /data/adb/ksu/log 2>&1 | head
