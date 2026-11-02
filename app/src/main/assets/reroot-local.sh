@@ -409,16 +409,20 @@ KSUD=$D/ksud
 [ -x "\$KSUD" ] || KSUD=/data/adb/ksu/bin/ksud
 echo "[ksu] ksud=\$KSUD size=\$(wc -c < \$KSUD 2>/dev/null)"
 "\$KSUD" --version 2>&1 | head -1
-"\$KSUD" install > $D/install.log 2>&1
-echo "[ksu] install rc=\$?"
-sed -n '1,20p' $D/install.log 2>/dev/null
-
-# ksud install 会把与内核匹配（vermagic 6.12.58）的 LKM 解到 /data/adb/ksu/lib/。
-# 直接拿它 insmod，vermagic 对得上，不会像工具包那个 6.12.76 一样 panic。
-echo "[ksu] ---- /data/adb/ksu/lib ----"
-ls -l /data/adb/ksu/lib 2>&1
-KO=\$(ls /data/adb/ksu/lib/*.ko 2>/dev/null | head -1)
-echo "[ksu] KO=\${KO:-none}"
+# KernelSU 的隐藏子命令：把内嵌的、与内核 KMI 匹配（vermagic 6.12.58）的 LKM 导出成文件。
+# 有了正确的 .ko 才能走 finit_module（这台机器只放行带文件的 insmod，不放行 init_module）。
+echo "[ksu] ---- ksud debug extract-binary ----"
+KO=$D/drv.ko
+"\$KSUD" debug extract-binary android16-6.12_kernelsu.ko "\$KO" 2>&1
+echo "[ksu] extract rc=\$?"
+if [ ! -s "\$KO" ]; then
+  "\$KSUD" debug extract-binary aarch64/android16-6.12_kernelsu.ko "\$KO" 2>&1
+  echo "[ksu] extract2 rc=\$?"
+fi
+ls -l "\$KO" 2>&1
+echo "[ksu] KO=\${KO:-none} size=\$(wc -c < "\$KO" 2>/dev/null)"
+echo "[ksu] drv.ko 头4字节: \$(head -c 4 "\$KO" 2>/dev/null | od -An -tx1 2>/dev/null)"
+echo "[ksu] drv.ko vermagic: \$(strings "\$KO" 2>/dev/null | grep -m1 vermagic)"
 
 # 按参考工具（Root 酱）的顺序打：先 late-load 不带 --package-name，再 ksud insmod / 内核 insmod
 # 带 manager_package= 参数（KernelSU bootstrap 内存装载，绕开被拦的 init_module）。
